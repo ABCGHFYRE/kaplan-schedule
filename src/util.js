@@ -4,7 +4,7 @@ export const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Sa
 export const DAYS_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 export const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
   'September', 'October', 'November', 'December'];
-export const ROLES = { kitchen: 'Kitchen', cashier: 'Cashier/Restock' };
+export const ROLES = { kitchen: 'Kitchen', cashier: 'Front' };
 export const PALETTE = ['#2f7d5b', '#c2562f', '#3c64b1', '#9a4fb0', '#b08a1c', '#2b8a99', '#c03d6a',
   '#5f7a1f', '#7b5a3c', '#4b5563', '#d0752a', '#3f8f3f'];
 
@@ -98,10 +98,10 @@ export function timeOffFor(timeoff, eid, date) {
 export function availabilityProblem(emp, d, blocks) {
   const a = emp?.avail?.[d];
   if (!a) return null;
-  if (a.off) return `${emp.name} is not available on ${DAYS[d]}s`;
+  if (a.off) return `Not available on ${DAYS[d]}s`;
   for (const b of blocks || []) {
     const e = b.e ?? b.s;
-    if (b.s < a.s || e > a.e) return `${emp.name} is only available ${fmtTime(a.s)} – ${fmtTime(a.e)} on ${DAYS[d]}s`;
+    if (b.s < a.s || e > a.e) return `Only available ${fmtTime(a.s)} – ${fmtTime(a.e)} on ${DAYS[d]}s`;
   }
   return null;
 }
