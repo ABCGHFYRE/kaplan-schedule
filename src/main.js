@@ -71,6 +71,7 @@ function render(force = false) {
   }
   const r = route();
   if (r.view === 'week' || r.view === 'coverage') watchWeek(r.weekId);
+  else if (['people', 'employees', 'timeoff'].includes(r.view)) watchWeek(mondayOf());
   const views = { week: viewWeek, coverage: viewCoverage, people: viewPeople, employees: viewPeople, timeoff: viewPeople, settings: viewSettings };
   const fn = views[r.view] || viewWeek;
   const scroll = window.scrollY;
@@ -236,7 +237,7 @@ function cellHtml(eid, d, r, { big = false } = {}) {
   let inner = '';
   if (cell?.off) inner = '<span class="offtag">Off</span>';
   else if (cell?.blocks?.length) {
-    inner = cell.blocks.map((b) => `<span class="shift ${blockRole(b, e) === 'kitchen' ? 'kitchen' : ''} ${b.e == null ? 'open' : ''}">${fmtBlock(b)}</span>`).join('');
+    inner = cell.blocks.map((b) => `<span class="shiftwrap"><span class="shift ${b.e == null ? 'open' : ''}">${fmtBlock(b)}</span>${blockRole(b, e) === 'kitchen' ? '<span class="klabel">Kitchen</span>' : ''}</span>`).join('');
   }
   if (cell?.note) inner += `<span class="cnote">${esc(cell.note)}</span>`;
   if (toff) inner += '<span class="cnote to">Time off</span>';
@@ -341,7 +342,6 @@ function viewWeek(r) {
       const date = addDays(r.weekId, d);
       return `<td class="cell ${week.cells[eid]?.[d]?.off ? 'is-off' : ''} ${warns.length ? 'warn' : ''} ${date === today ? 'today' : ''}" data-action="cell" data-eid="${eid}" data-d="${d}" title="${esc(warns.join('\n'))}">${inner}</td>`;
     }).join('');
-    const h = totals.byEmp[eid];
     return `<tr>
       <th class="emp">
         <span class="dot" style="background:${esc(e.color || '#888')}"></span><span class="ename">${esc(e.name)}</span>
@@ -352,7 +352,6 @@ function viewWeek(r) {
             <button data-action="row-remove" data-eid="${eid}" class="danger">Remove from this week</button>
           </span></span>
       </th>${tds}
-      <td class="hrs ${h > ot ? 'ot' : ''}" title="${h > ot ? `Over ${ot} hours` : ''}">${fmtHours(h)}</td>
     </tr>`;
   }).join('');
   return `${weekNav(r, tools)}
@@ -360,13 +359,13 @@ function viewWeek(r) {
   <div class="tablewrap card" id="print-area">
     <div class="print-title">Kaplan Food — Week of ${weekLabel(r.weekId)}</div>
     <table class="sched">
-      <thead><tr><th class="corner"></th>${head}<th class="hrs">Hours</th></tr></thead>
+      <thead><tr><th class="corner"></th>${head}</tr></thead>
       <tbody>${body}</tbody>
     </table>
   </div>
   <div class="belowgrid">
     ${addPerson}
-    <span class="legend"><span class="shift">Front</span><span class="shift kitchen">Kitchen</span><span class="muted small">Click any box to change a shift. Shifts with no end time don't count toward hours.</span></span>
+    <span class="muted small">Click any box to change a shift.</span>
   </div>`;
 }
 
@@ -645,12 +644,16 @@ function viewPeople() {
   const upcoming = state.timeoff.filter((t) => (t.end || t.start) >= today).sort((a, b) => (a.start > b.start ? 1 : -1));
   const shortDate = (s) => prettyDate(s).replace(/, \d{4}$/, '');
   const offText = (t) => `${shortDate(t.start)}${t.end && t.end !== t.start ? ` – ${shortDate(t.end)}` : ''}`;
+  const thisWeek = state.weekId === mondayOf() && state.week ? weekTotals(state.week).byEmp : null;
+  const ot = state.settings.overtime || 40;
   const person = (e) => {
     const mine = upcoming.filter((t) => t.eid === e.id);
+    const h = thisWeek?.[e.id];
     return `<div class="person">
       <div class="pmain">
         <span class="dot big" style="background:${esc(e.color || '#888')}"></span>
         <button class="pname" data-action="rename" data-eid="${e.id}" title="Rename">${esc(e.name)}</button>
+        ${h != null ? `<span class="phrs ${h > ot ? 'ot' : ''}" title="Hours scheduled this week">${fmtHours(h)} hrs this week</span>` : ''}
       </div>
       <div class="seg small">
         <button class="${e.role !== 'kitchen' ? 'on' : ''}" data-action="set-role" data-role="cashier" data-eid="${e.id}">Front</button>
