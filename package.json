@@ -1,0 +1,23 @@
+{
+  "name": "kaplan-schedule",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "esbuild src/main.js --bundle --minify --format=esm --target=es2020 --outfile=docs/app.js",
+    "dev": "esbuild src/main.js --bundle --format=esm --sourcemap --outfile=docs/app.js --watch"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "firebase": "^12.19.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}
