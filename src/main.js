@@ -309,7 +309,7 @@ function viewWeek(r) {
       const e = emp(eid);
       const { inner, warns } = cellHtml(eid, d, r, { big: true });
       return `<button class="mrow ${warns.length ? 'warn' : ''}" data-action="cell" data-eid="${eid}" data-d="${d}">
-        <span class="mname"><span class="dot" style="background:${esc(e.color || '#888')}"></span>${esc(e.name)}</span>
+        <span class="mname"><span class="dot" style="background:${esc(e.color || '#888')}"></span>${esc(e.name)}<small class="mhrs ${totals.byEmp[eid] > ot ? 'ot' : ''}">${fmtHours(totals.byEmp[eid])} hrs/wk</small></span>
         <span class="mshift">${inner}</span>
         ${warns.length ? `<span class="mwarn">${esc(warns[0])}</span>` : ''}
       </button>`;
@@ -342,6 +342,7 @@ function viewWeek(r) {
       const date = addDays(r.weekId, d);
       return `<td class="cell ${week.cells[eid]?.[d]?.off ? 'is-off' : ''} ${warns.length ? 'warn' : ''} ${date === today ? 'today' : ''}" data-action="cell" data-eid="${eid}" data-d="${d}" title="${esc(warns.join('\n'))}">${inner}</td>`;
     }).join('');
+    const h = totals.byEmp[eid];
     return `<tr>
       <th class="emp">
         <span class="dot" style="background:${esc(e.color || '#888')}"></span><span class="ename">${esc(e.name)}</span>
@@ -352,6 +353,7 @@ function viewWeek(r) {
             <button data-action="row-remove" data-eid="${eid}" class="danger">Remove from this week</button>
           </span></span>
       </th>${tds}
+      <td class="hrs ${h > ot ? 'ot' : ''}" title="${h > ot ? `Over ${ot} hours` : 'Hours this week'}">${fmtHours(h)}</td>
     </tr>`;
   }).join('');
   return `${weekNav(r, tools)}
@@ -359,13 +361,13 @@ function viewWeek(r) {
   <div class="tablewrap card" id="print-area">
     <div class="print-title">Kaplan Food — Week of ${weekLabel(r.weekId)}</div>
     <table class="sched">
-      <thead><tr><th class="corner"></th>${head}</tr></thead>
+      <thead><tr><th class="corner"></th>${head}<th class="hrs">Hours</th></tr></thead>
       <tbody>${body}</tbody>
     </table>
   </div>
   <div class="belowgrid">
     ${addPerson}
-    <span class="muted small">Click any box to change a shift.</span>
+    <span class="muted small">Click any box to change a shift. Shifts with no end time don't count toward hours. Hours are not shown on the saved image.</span>
   </div>`;
 }
 

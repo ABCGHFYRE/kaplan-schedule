@@ -185,7 +185,9 @@ td.hrs.ot { color: var(--bad); background: var(--bad-soft); }
 .mrow { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: .3rem .6rem; width: 100%; border: 0; border-top: 1px solid var(--line); background: none; text-align: left; padding: .9rem .3rem; cursor: pointer; min-height: 60px; }
 .mrow:active { background: #f3f8f5; }
 .mrow.warn { background: var(--warn-soft); }
-.mname { display: flex; align-items: center; font-weight: 700; font-size: 1.1rem; }
+.mname { display: flex; align-items: center; font-weight: 700; font-size: 1.1rem; flex-wrap: wrap; }
+.mhrs { margin-left: .5rem; font-size: .78rem; color: var(--muted); font-weight: 600; }
+.mhrs.ot { color: var(--bad); }
 .mshift { text-align: right; }
 .mshift .shift { margin-left: .3rem; font-size: 1rem; }
 .mshift .add { color: var(--brand); font-weight: 600; font-size: .95rem; }
