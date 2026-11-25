@@ -357,3 +357,25 @@ table.list { width: 100%; border-collapse: collapse; }
   .hg-lbl { display: inline-block; }
   .hg-cell select { flex: 1; min-width: 0; }
 }
+
+/* ---------- shift editor: time fields ---------- */
+.timebox { background: #f6f9f7; border: 1px solid var(--line); border-radius: 14px; padding: .8rem; }
+.timerow { display: flex; align-items: flex-end; gap: .5rem; flex-wrap: wrap; }
+.timerow + .timerow { margin-top: .8rem; padding-top: .8rem; border-top: 1px dashed #d3dad6; }
+.partlabel { width: 100%; display: flex; justify-content: space-between; align-items: center; font-size: .85rem; font-weight: 700; color: var(--ink); }
+.tfield { display: flex; flex-direction: column; gap: .2rem; flex: 1; min-width: 130px; }
+.tfield span { font-size: .8rem; font-weight: 700; color: var(--muted); }
+.tfield input[type=time] { font-size: 1.25rem; font-weight: 700; padding: .6rem .7rem; border: 2px solid #cfd8d3; border-radius: 12px; background: #fff; min-height: 52px; width: 100%; }
+.tfield input[type=time]:focus { border-color: var(--brand-2); outline: none; }
+.tfield input[type=time]:disabled { background: #eef1ef; color: #b0b8b4; }
+.tarrow { font-size: 1.3rem; color: var(--muted); padding-bottom: .85rem; }
+.noend { flex-direction: row !important; align-items: center; gap: .35rem !important; font-weight: 500 !important; font-size: .88rem !important; width: 100%; white-space: nowrap; }
+.rmpart { margin: 0; padding: 0; color: var(--bad); font-size: .85rem; }
+.timebox .linkbtn { margin-top: .4rem; padding-bottom: 0; }
+@media (max-width: 760px) {
+  .tfield { min-width: 0; }
+  .tfield input[type=time] { font-size: 1.05rem; padding: .55rem .5rem; }
+  .tarrow { display: none; }
+  .timerow { gap: .6rem; }
+  .noend { width: 100%; padding-bottom: 0; }
+}

@@ -372,57 +372,74 @@ function viewWeek(r) {
 }
 
 // ---------------------------------------------------------------- cell editor
+const toHHMM = (m) => (m == null ? '' : `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
+const fromHHMM = (v) => {
+  if (!v) return null;
+  const [h, mi] = v.split(':').map(Number);
+  return h * 60 + mi;
+};
+
 function openCellEditor(eid, d) {
   const week = state.week;
   const e = emp(eid);
   const orig = week.cells[eid]?.[d] || {};
-  const origBlocks = (orig.blocks || []).map((b) => ({ s: b.s, e: b.e, ...(b.pz ? { pz: true } : {}) }));
   const st = {
-    blocks: origBlocks,
+    blocks: (orig.blocks || []).map((b) => ({ s: b.s, e: b.e, ...(b.pz ? { pz: true } : {}) })),
     role: orig.blocks?.[0] ? blockRole(orig.blocks[0], e) : (e.role || 'cashier'),
     note: orig.note || '',
     applyTo: new Set(),
-    custom: origBlocks.length > 0 && !(state.settings.quickShifts || []).some((q) => origBlocks.length === 1 && q.s === origBlocks[0].s && q.e === origBlocks[0].e),
   };
+  if (!st.blocks.length) st.blocks.push({ s: null, e: null });
   const date = addDays(state.weekId, d);
   const close = closeModal;
   closeModal();
 
+  const filled = () => st.blocks.filter((b) => b.s != null);
   const withRole = (blocks) => blocks.map((b) => (st.role !== (e.role || 'cashier') ? { ...b, role: st.role } : { ...b }));
 
-  const draw = () => {
-    const warns = cellWarnings({ cell: { blocks: st.blocks }, emp: e, d, date, timeoff: state.timeoff });
+  const warningsHtml = () => {
+    const warns = cellWarnings({ cell: { blocks: filled() }, emp: e, d, date, timeoff: state.timeoff });
     const t = state.timeoff.find((x) => x.eid === eid && x.start <= date && date <= (x.end || x.start));
     if (t && !warns.some((w) => w.startsWith('Time off'))) warns.unshift(`Has time off this day${t.note ? ` (${t.note})` : ''}`);
-    const quick = (state.settings.quickShifts || []).map((q, i) => {
-      const on = !st.custom && st.blocks.length === 1 && st.blocks[0].s === q.s && st.blocks[0].e === q.e;
-      return `<button class="qbtn ${on ? 'on' : ''}" data-q="${i}">${fmtBlock(q)}</button>`;
-    }).join('');
-    const custom = st.blocks.map((b, i) => `
-      <div class="blockrow">
-        <span class="muted">${i ? 'Then' : 'From'}</span>
-        ${timeSelect(`data-bs="${i}"`, b.s)}
-        <span class="muted">to</span>
-        ${timeSelect(`data-be="${i}"`, b.e, { open: true })}
-        ${st.blocks.length > 1 ? `<button class="btn icon ghost" data-rm="${i}" title="Remove this part">✕</button>` : ''}
+    return warns.length ? `<div class="problems slim">⚠ ${warns.map(esc).join('<br>')}</div>` : '';
+  };
+  const quickOn = (q) => st.blocks.length === 1 && st.blocks[0].s === q.s && st.blocks[0].e === q.e;
+  // Update highlights + warnings without redrawing (so the phone's time picker isn't closed).
+  const refresh = () => {
+    modalRoot.querySelectorAll('[data-q]').forEach((btn) => {
+      btn.classList.toggle('on', quickOn(state.settings.quickShifts[+btn.dataset.q]));
+    });
+    const w = modalRoot.querySelector('#ed-warn');
+    if (w) w.innerHTML = warningsHtml();
+  };
+
+  const draw = () => {
+    const quick = (state.settings.quickShifts || []).map((q, i) => `<button class="qbtn ${quickOn(q) ? 'on' : ''}" data-q="${i}">${fmtBlock(q)}</button>`).join('');
+    const timeRows = st.blocks.map((b, i) => `
+      <div class="timerow">
+        ${st.blocks.length > 1 ? `<div class="partlabel">${i === 0 ? 'First part' : 'Second part'}<button class="linkbtn rmpart" data-rm="${i}">Remove</button></div>` : ''}
+        <label class="tfield"><span>Start</span><input type="time" step="900" data-ts="${i}" value="${toHHMM(b.s)}"></label>
+        <span class="tarrow">→</span>
+        <label class="tfield ${b.e === null && b.s != null && b.noEnd ? 'disabled' : ''}"><span>End</span><input type="time" step="900" data-te="${i}" value="${toHHMM(b.e)}" ${b.noEnd ? 'disabled' : ''}></label>
+        <label class="noend"><input type="checkbox" data-noend="${i}" ${b.noEnd ? 'checked' : ''}> No end time</label>
       </div>`).join('');
     modalRoot.innerHTML = `
     <div class="overlay" data-close>
       <div class="modal editor" role="dialog">
         <header><div><b>${esc(e.name)}</b><div class="muted">${prettyDate(date).replace(/, \d{4}$/, '')}</div></div>
           <button class="btn icon ghost" data-close aria-label="Close">✕</button></header>
-        ${warns.length ? `<div class="problems slim">⚠ ${warns.map(esc).join('<br>')}</div>` : ''}
+        <div id="ed-warn">${warningsHtml()}</div>
 
-        <div class="label">Pick a shift</div>
-        <div class="qgrid">${quick}</div>
-        <div class="qgrid two">
-          <button class="qbtn offbtn ${orig.off && !st.blocks.length ? 'on' : ''}" data-off>Day off</button>
-          <button class="qbtn" data-clear>Not scheduled</button>
+        <div class="timebox">${timeRows}
+          ${st.blocks.length < 2 ? '<button class="linkbtn" data-addblock>+ Add a second part (split shift)</button>' : ''}
         </div>
 
-        <button class="linkbtn" data-togglecustom>${st.custom ? '▾' : '▸'} Different time or split shift</button>
-        ${st.custom ? `<div class="customwrap">${custom || ''}
-          <button class="btn ghost small" data-addblock>+ ${st.blocks.length ? 'Add a second part (split shift)' : 'Add times'}</button></div>` : ''}
+        <div class="label">Common shifts <span class="muted">(tap to fill in)</span></div>
+        <div class="qgrid">${quick}</div>
+        <div class="qgrid two">
+          <button class="qbtn offbtn ${orig.off ? 'on' : ''}" data-off>Day off</button>
+          <button class="qbtn" data-clear>Not scheduled</button>
+        </div>
 
         <div class="label">Works in</div>
         <div class="seg">
@@ -456,44 +473,57 @@ function openCellEditor(eid, d) {
     if (t.dataset.q !== undefined) {
       const q = state.settings.quickShifts[+t.dataset.q];
       st.blocks = [{ s: q.s, e: q.e }];
-      st.custom = false;
       draw();
     } else if (t.hasAttribute('data-off')) save({ off: true, note: st.note });
     else if (t.hasAttribute('data-clear')) save(st.note ? { note: st.note } : null);
-    else if (t.hasAttribute('data-togglecustom')) {
-      st.custom = !st.custom;
-      if (st.custom && !st.blocks.length) st.blocks.push({ s: 570, e: 900 });
-      draw();
-    } else if (t.hasAttribute('data-addblock')) {
+    else if (t.hasAttribute('data-addblock')) {
       const last = st.blocks[st.blocks.length - 1];
-      const s = last ? Math.min((last.e ?? last.s) + 120, 1200) : 570;
-      st.blocks.push({ s, e: Math.min(s + 240, 1410) });
+      const s = last.e != null ? Math.min(last.e + 120, 1200) : null;
+      st.blocks.push({ s, e: s != null ? Math.min(s + 240, 1410) : null });
       draw();
     } else if (t.dataset.rm !== undefined) {
       st.blocks.splice(+t.dataset.rm, 1);
       draw();
     } else if (t.dataset.role) {
       st.role = t.dataset.role;
-      draw();
+      modalRoot.querySelectorAll('[data-role]').forEach((b) => b.classList.toggle('on', b.dataset.role === st.role));
     } else if (t.hasAttribute('data-save')) {
-      const blocks = withRole(st.blocks.slice().sort((a, b) => a.s - b.s));
+      const parts = filled();
+      for (const b of parts) {
+        if (b.e == null && !b.noEnd) { toast('Pick an end time, or check “No end time”.', 'bad'); return; }
+        if (b.e != null && b.e <= b.s) { toast('The end time must be after the start time.', 'bad'); return; }
+      }
+      const blocks = withRole(parts.map(({ noEnd, ...b }) => ({ ...b, e: noEnd ? null : b.e })).sort((a, b) => a.s - b.s));
       save(blocks.length ? { blocks, note: st.note } : (st.note ? { note: st.note } : null));
     }
   };
+  const onTime = (ev) => {
+    const t = ev.target;
+    if (t.dataset.ts !== undefined) st.blocks[+t.dataset.ts].s = fromHHMM(t.value);
+    else if (t.dataset.te !== undefined) st.blocks[+t.dataset.te].e = fromHHMM(t.value);
+    else return false;
+    refresh();
+    return true;
+  };
   modalRoot.onchange = (ev) => {
     const t = ev.target;
-    if (t.dataset.bs !== undefined) st.blocks[+t.dataset.bs].s = +t.value;
-    else if (t.dataset.be !== undefined) st.blocks[+t.dataset.be].e = t.value === 'open' ? null : +t.value;
-    else if (t.dataset.apply !== undefined) {
+    if (onTime(ev)) return;
+    if (t.dataset.noend !== undefined) {
+      const b = st.blocks[+t.dataset.noend];
+      b.noEnd = t.checked;
+      if (t.checked) b.e = null;
+      draw();
+    } else if (t.dataset.apply !== undefined) {
       const i = +t.dataset.apply;
       if (t.checked) st.applyTo.add(i); else st.applyTo.delete(i);
-      return;
-    } else return;
-    draw();
+    }
   };
   modalRoot.oninput = (ev) => {
     if (ev.target.hasAttribute('data-note')) st.note = ev.target.value;
+    else onTime(ev);
   };
+  // Shifts saved with no end time open with the box already checked.
+  st.blocks.forEach((b) => { if (b.s != null && b.e == null) b.noEnd = true; });
   draw();
 }
 
@@ -775,7 +805,7 @@ function viewSettings() {
     <h3>Shift buttons</h3>
     <p class="muted small">The shifts you can pick with one tap.</p>
     <div class="chips">${(s.quickShifts || []).map((q, i) => `<span class="chip">${fmtBlock(q)} <button data-action="qs-del" data-i="${i}" title="Remove">✕</button></span>`).join('')}</div>
-    <div class="row">${timeSelect('id="qs-s"', 570)} to ${timeSelect('id="qs-e"', 900)} <button class="btn" data-action="qs-add">Add</button></div>
+    <div class="row wrap"><label class="tfield"><span>Start</span><input type="time" step="900" id="qs-s" value="09:30"></label> <span class="tarrow">→</span> <label class="tfield"><span>End</span><input type="time" step="900" id="qs-e" value="15:00"></label> <button class="btn" data-action="qs-add">Add button</button></div>
   </section>
   <section class="card">
     <h3>Backup</h3>
@@ -903,8 +933,9 @@ app.addEventListener('click', async (ev) => {
       break;
     }
     case 'qs-add': {
-      const s = +document.getElementById('qs-s').value;
-      const e = +document.getElementById('qs-e').value;
+      const s = fromHHMM(document.getElementById('qs-s').value);
+      const e = fromHHMM(document.getElementById('qs-e').value);
+      if (s == null || e == null) { toast('Pick a start and end time', 'bad'); break; }
       if (e <= s) { toast('End must be after start', 'bad'); break; }
       const qs = [...(state.settings.quickShifts || []), { s, e }].sort((x, y) => x.s - y.s || x.e - y.e);
       await guard(() => saveSettings({ quickShifts: qs }));
