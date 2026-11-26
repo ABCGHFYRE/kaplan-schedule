@@ -1,6 +1,6 @@
 {
   "name": "Kaplan Food Schedule",
-  "short_name": "Kaplan",
+  "short_name": "Schedule",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
