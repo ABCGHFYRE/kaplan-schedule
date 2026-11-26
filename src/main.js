@@ -185,10 +185,6 @@ function renderLogin(error = '') {
 // ====================================================================== shared bits
 function weekNav(r, extra = '') {
   const rel = relWeek(r.weekId);
-  const jump = [
-    r.weekId !== mondayOf() ? `<button class="btn ghost small" data-go="${r.view}/${mondayOf()}">This week</button>` : '',
-    r.weekId !== nextMonday() ? `<button class="btn ghost small" data-go="${r.view}/${nextMonday()}">Next week</button>` : '',
-  ].join('');
   return `
   <div class="toolbar">
     <div class="weeknav">
@@ -199,7 +195,6 @@ function weekNav(r, extra = '') {
         <input type="date" data-jump="${r.view}" value="${r.weekId}" aria-label="Jump to date">
       </label>
       <button class="btn icon" data-go="${r.view}/${addDays(r.weekId, 7)}" title="Next week" aria-label="Next week">›</button>
-      <span class="weekjump">${jump}</span>
     </div>
     <div class="seg viewtoggle">
       <button class="${r.view === 'week' ? 'on' : ''}" data-go="week/${r.weekId}">Week</button>
