@@ -144,8 +144,8 @@ export async function setRows(weekId, rows) {
   await updateDoc(weekRef(weekId), 'rows', rows, 'updatedAt', serverTimestamp());
 }
 
-export async function createWeek(weekId, { copyFrom = null, rows = [], notes = {} } = {}) {
-  let data = { rows, cells: {}, notes, hours: {} };
+export async function createWeek(weekId, { copyFrom = null, rows = [], notes = {}, shared = null } = {}) {
+  let data = { rows, cells: {}, notes, hours: {}, ...(shared ? { shared } : {}) };
   if (copyFrom) {
     const src = await getDoc(weekRef(copyFrom));
     if (src.exists()) {
@@ -154,7 +154,7 @@ export async function createWeek(weekId, { copyFrom = null, rows = [], notes = {
       const keep = w.rows.filter(active);
       const cells = {};
       for (const eid of keep) if (w.cells[eid]) cells[eid] = w.cells[eid];
-      data = { rows: keep, cells, notes, hours: {} };
+      data = { rows: keep, cells, notes, hours: {}, ...(shared ? { shared } : {}) };
     }
   }
   await setDoc(weekRef(weekId), { ...data, updatedAt: serverTimestamp() });

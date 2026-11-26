@@ -1055,3 +1055,47 @@ body.has-inspector #toast { bottom: calc(var(--insh, 250px) + 1.5rem); }
   .statusfill { height: 0; }
   :root { background-color: var(--bg); }
 }
+
+/* ---------- hours editor: copy to other days ---------- */
+.copybox { margin-top: 1rem; padding-top: .9rem; border-top: 1px solid var(--line); }
+.copybox .label:first-child { margin-top: 0; }
+.cp-presets { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .55rem; }
+.cp-preset { border: 1.5px solid var(--line); background: #fff; color: var(--ink); border-radius: 99px; padding: .45rem .95rem; font: inherit; font-weight: 600; font-size: .92rem; cursor: pointer; transition: background .15s, border-color .15s, color .15s, transform .1s; }
+.cp-preset:hover { border-color: var(--brand-2); }
+.cp-preset.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+.cp-preset:active, .cp-day:active { transform: scale(.95); }
+.cp-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: .3rem; }
+.cp-day { min-width: 0; border: 1.5px solid var(--line); background: #fff; color: var(--ink); border-radius: 10px; padding: .5rem 0; font: inherit; font-weight: 600; font-size: .88rem; cursor: pointer; transition: background .15s, border-color .15s, color .15s, transform .1s; }
+.cp-day:hover:not(:disabled) { border-color: var(--brand-2); }
+.cp-day.on { background: var(--brand-soft); border-color: var(--brand-2); color: var(--brand); }
+.cp-day.self { background: var(--brand); border-color: var(--brand); color: #fff; opacity: 1; cursor: default; }
+.cp-scope { display: flex; margin-top: .1rem; }
+.cp-scope button { flex: 1; }
+.cp-note { margin: .45rem 0 0; }
+@media (max-width: 380px) { .cp-scope button { font-size: .82rem; padding-left: .3rem; padding-right: .3rem; } }
+
+/* hours rows: on phones the "Closed" box goes on its own line so the times have room */
+@media (max-width: 560px) {
+  .hrow { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: .4rem .5rem; }
+  .hrow .hg-lbl { grid-column: 1 / -1; }
+  .hrow .closedchk { grid-column: 1 / -1; justify-self: start; }
+  .hrow input[type=time] { width: 100%; }
+}
+
+/* ---------- delete / copy whole weeks ---------- */
+.dangerzone { display: flex; justify-content: center; margin: 1.6rem 0 .5rem; }
+.btn.danger.solid { background: var(--bad); border-color: var(--bad); color: #fff; }
+.btn.danger.solid:disabled { opacity: .4; cursor: not-allowed; }
+.dangerbox .db-body p { margin: .2rem 0 .6rem; }
+.db-list { margin: .2rem 0 .7rem; padding-left: 1.2rem; }
+.db-list li { margin: .15rem 0; }
+.db-warn { background: #fff4e0; color: #7a4b00; border-radius: 10px; padding: .6rem .75rem; font-weight: 600; }
+.db-type { display: flex; flex-direction: column; gap: .35rem; margin: .3rem 0 .4rem; }
+.db-type input { font-size: 1.05rem; letter-spacing: .08em; text-transform: uppercase; padding: .65rem .8rem; border: 1.5px solid var(--line); border-radius: 10px; }
+.db-type input:focus { outline: none; border-color: var(--bad); box-shadow: 0 0 0 3px #f6d8d5; }
+.copypick .cp-weeks { display: flex; flex-direction: column; gap: .45rem; max-height: min(52vh, 460px); overflow-y: auto; margin: .6rem 0 .5rem; padding: 2px; }
+.cp-week { display: flex; flex-direction: column; align-items: flex-start; gap: .15rem; text-align: left; width: 100%; border: 1.5px solid var(--line); background: #fff; border-radius: 12px; padding: .65rem .8rem; font: inherit; color: var(--ink); cursor: pointer; transition: border-color .15s, background .15s, transform .1s; }
+.cp-week:hover { border-color: var(--brand-2); background: var(--brand-soft); }
+.cp-week:active { transform: scale(.985); }
+.cpw-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .55rem; }
+.cpw-meta { font-size: .85rem; color: var(--muted); }

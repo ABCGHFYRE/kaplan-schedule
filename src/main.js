@@ -630,6 +630,7 @@ function viewWeek(r) {
     ? `<p class="muted">Copy an earlier week and change what's different, or start with an empty week.</p>
       <div class="row center wrap">
         <button class="btn primary" data-action="create-copy">Copy the week of ${weekLabel(prev).replace(/, \d{4}$/, '')}</button>
+        <button class="btn" data-action="copy-pick">Copy a different week…</button>
         <button class="btn" data-action="create-blank">Start empty</button>
       </div>`
     : `<p class="muted">Everyone on your team will be listed. Then tap a box to add a shift.</p>
@@ -654,8 +655,8 @@ function viewWeek(r) {
       <button class="btn primary" data-action="png" title="See a picture of this week and send it to the group chat">Share image</button>
       <div class="menu"><button class="btn" data-action="menu">More ▾</button>
         <div class="menu-list">
-          <button data-action="replace-copy">Replace with last week's schedule</button>
-          <button data-action="clear-week" class="danger">Delete this week</button>
+          <button data-action="copy-pick">Copy from another week…</button>
+          <button data-action="clear-week" class="danger">Delete this week…</button>
         </div>
       </div>`;
 
@@ -718,7 +719,8 @@ function viewWeek(r) {
         <button class="notebtn ${week.notes[d] ? 'has' : ''}" data-action="note" data-d="${d}">${week.notes[d] ? esc(week.notes[d]) : '+ Note / closed'}</button></div>
       ${list || '<p class="muted">Nobody on this week yet.</p>'}
     </div>
-    ${addPerson}`;
+    ${addPerson}
+    <div class="dangerzone"><button class="btn small ghost danger" data-action="clear-week">Delete this week's schedule…</button></div>`;
   }
 
   // ---- desktop grid
@@ -768,7 +770,132 @@ function viewWeek(r) {
   <div class="belowgrid">
     ${addPerson}
     <span class="muted small">Use ⋯ next to a name to move someone or take them off this week. Shifts with no end time don't count toward hours. Hours don't show on the shared image.</span>
-  </div>`;
+  </div>
+  <div class="dangerzone"><button class="btn small ghost danger" data-action="clear-week">Delete this week's schedule…</button></div>`;
+}
+
+
+// ---------------------------------------------------------------- whole-week delete / copy
+const shiftCount = (w) => Object.values(w?.cells || {}).reduce((n, days) => n + Object.values(days).filter((c) => c?.blocks?.length).length, 0);
+const peopleCount = (w) => Object.values(w?.cells || {}).filter((days) => Object.values(days).some((c) => c?.blocks?.length)).length;
+
+/** A dialog with a title and body; with typeWord, the red button only works once that word is typed. */
+function askDanger({ title, body, ok, typeWord = '', danger = true }) {
+  return new Promise((resolve) => {
+    closeModal();
+    modalRoot.dataset.open = '1';
+    modalRoot.innerHTML = `
+    <div class="overlay enter"><div class="modal narrow dangerbox">
+      <header><b>${title}</b></header>
+      <div class="db-body">${body}</div>
+      ${typeWord ? `<label class="db-type"><span>Type <b>${typeWord}</b> to confirm</span>
+        <input type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" data-type placeholder="${typeWord}"></label>` : ''}
+      <footer><button class="btn" data-n>Cancel</button><button class="btn ${danger ? 'danger solid' : 'primary'}" data-y ${typeWord ? 'disabled' : ''}>${esc(ok)}</button></footer>
+    </div></div>`;
+    const yes = modalRoot.querySelector('[data-y]');
+    const input = modalRoot.querySelector('[data-type]');
+    const done = (v) => { closeModal(); resolve(v); };
+    if (input) {
+      input.oninput = () => { yes.disabled = input.value.trim().toUpperCase() !== typeWord; };
+      input.onkeydown = (e) => { if (e.key === 'Enter' && !yes.disabled) done(true); };
+      setTimeout(() => input.focus(), 60);
+    }
+    modalRoot.querySelector('[data-n]').onclick = () => done(false);
+    yes.onclick = () => { if (!yes.disabled) done(true); };
+  });
+}
+
+async function deleteWeekFlow(wid) {
+  const w = state.weekId === wid ? state.week : await readWeek(wid);
+  if (!w) return;
+  const label = weekLabel(wid);
+  const shifts = shiftCount(w);
+  const people = peopleCount(w);
+  const notes = Object.values(w.notes || {}).filter(Boolean).length;
+  const lines = [
+    shifts ? `<li><b>${shifts} shift${shifts === 1 ? '' : 's'}</b> for ${people} ${people === 1 ? 'person' : 'people'}</li>` : '<li>No shifts yet</li>',
+    notes ? `<li>${notes} day note${notes === 1 ? '' : 's'}</li>` : '',
+    Object.keys(w.hours || {}).length ? '<li>Hours you changed for this week</li>' : '',
+    Object.keys(w.closed || {}).length ? '<li>Days marked closed</li>' : '',
+  ].join('');
+  const sharedWarn = w.shared ? `<p class="db-warn">⚠ You already sent this schedule to the group chat${w.shared.at ? ` (${esc(fmtSharedAt(w.shared.at))})` : ''}. Your team may be using it.</p>` : '';
+  // Warning 1: what will be lost.
+  const first = await askDanger({
+    title: `Delete the week of ${esc(label)}?`,
+    body: `<p>This removes the whole schedule for this week:</p><ul class="db-list">${lines}</ul>${sharedWarn}`,
+    ok: shifts ? 'Continue' : 'Delete week',
+  });
+  if (!first) return;
+  // Warning 2 (when there's real work in it): type DELETE.
+  if (shifts) {
+    const second = await askDanger({
+      title: 'Are you sure?',
+      body: `<p>${shifts} shift${shifts === 1 ? '' : 's'} will be deleted for the week of <b>${esc(label)}</b>.</p>
+        <p class="muted small">If you change your mind, press Undo right after (the ↶ button at the top).</p>`,
+      ok: 'Delete this week', typeWord: 'DELETE',
+    });
+    if (!second) return;
+  }
+  prevCache = {};
+  await changeWeek(`Deleted the week of ${label}`, () => deleteWeek(wid));
+}
+function fmtSharedAt(at) {
+  const t = at?.toDate ? at.toDate() : new Date(at);
+  if (Number.isNaN(+t)) return '';
+  return `${MONTHS[t.getMonth()].slice(0, 3)} ${t.getDate()}, ${fmtTime(t.getHours() * 60 + t.getMinutes())}`;
+}
+
+/** Pick any saved week to copy into this one. */
+async function openCopyPicker(wid, more = 0) {
+  closeModal();
+  modalRoot.dataset.open = '1';
+  const shell = (inner) => `
+    <div class="overlay enter" data-x><div class="modal narrow copypick">
+      <header><b>Copy from which week?</b><button class="btn icon ghost" data-x aria-label="Close">✕</button></header>
+      ${inner}
+    </div></div>`;
+  modalRoot.innerHTML = shell('<div class="empty"><div class="spinner"></div></div>');
+  modalRoot.onclick = (ev) => { if (ev.target.hasAttribute('data-x')) closeModal(); };
+  const span = 52 * (more + 1);
+  let weeks;
+  try { weeks = await loadWeeks(addDays(wid, -7 * span), addDays(wid, 7 * 12)); } catch (e) { console.error(e); toast("Couldn't load weeks", 'bad'); closeModal(); return; }
+  if (!modalRoot.querySelector('.copypick')) return; // closed while loading
+  weeks = weeks.filter((w) => w.id !== wid && shiftCount(w)).sort((a, b) => (a.id < b.id ? 1 : -1));
+  const ago = (id) => {
+    const n = Math.round((parseYmd(wid) - parseYmd(id)) / (7 * 864e5));
+    return n === 1 ? 'the week before' : n > 1 ? `${n} weeks before` : n === -1 ? 'the week after' : `${-n} weeks after`;
+  };
+  const hrs = (w) => fmtHours(Object.values(weekTotals(w).byEmp).reduce((a, b) => a + b, 0));
+  const list = weeks.map((w) => `
+    <button class="cp-week" data-copy="${w.id}">
+      <span class="cpw-main"><b>${esc(weekLabel(w.id))}</b><span class="muted small">${ago(w.id)}</span></span>
+      <span class="cpw-meta">${shiftCount(w)} shifts · ${peopleCount(w)} people · ${hrs(w)} hrs</span>
+    </button>`).join('');
+  modalRoot.innerHTML = shell(`
+      <p class="muted small">Copies everyone's shifts. Holiday notes for the new week are added for you; people who no longer work here are left out.</p>
+      <div class="cp-weeks">${list || '<p class="muted">No other saved weeks found.</p>'}</div>
+      <button class="btn ghost small" data-older>Show older weeks</button>`);
+  modalRoot.onclick = async (ev) => {
+    const t = ev.target;
+    if (t.hasAttribute('data-x')) { closeModal(); return; }
+    if (t.closest('[data-older]')) { openCopyPicker(wid, more + 1); return; }
+    const b = t.closest('[data-copy]');
+    if (!b) return;
+    const from = b.dataset.copy;
+    const cur = state.weekId === wid ? state.week : await readWeek(wid);
+    const have = shiftCount(cur);
+    if (cur && have) {
+      const ok = await askDanger({
+        title: 'Replace this week?',
+        body: `<p>The week of <b>${esc(weekLabel(wid))}</b> already has <b>${have} shift${have === 1 ? '' : 's'}</b>. They'll be replaced by the week of ${esc(weekLabel(from))}.</p>
+          <p class="muted small">You can press Undo right after.</p>`,
+        ok: 'Replace',
+      });
+      if (!ok) return;
+    } else closeModal();
+    prevCache = {};
+    await changeWeek(`Copied the week of ${weekLabel(from)}`, () => createWeek(wid, { copyFrom: from, notes: holidaysInWeek(wid), shared: cur?.shared || null }));
+  };
 }
 
 // ---------------------------------------------------------------- cell editor
@@ -1368,29 +1495,68 @@ function openHoursEditor(d, { usual = false } = {}) {
   const cur = usual
     ? { store: all[d]?.store === undefined ? [300, 1230] : all[d].store, kitchen: all[d]?.kitchen, custom: false }
     : dayHours(state.settings, state.week, d);
-  const st = { store: cur.store, kitchen: cur.kitchen, everyDay: false };
+  // targets: other days to copy to; scope: what to copy there (both / store only / kitchen only).
+  const st = { store: cur.store, kitchen: cur.kitchen, targets: new Set(), scope: 'both' };
+  const others = (days) => days.filter((x) => x !== d);
+  const PRESETS = { weekdays: others([0, 1, 2, 3, 4]), weekend: others([5, 6]), all: others([0, 1, 2, 3, 4, 5, 6]) };
+  const sameSet = (a) => a.length === st.targets.size && a.every((x) => st.targets.has(x));
+  const copyBox = () => `
+      <div class="label">Also use for</div>
+      <div class="cp-presets">
+        ${[['weekdays', 'Weekdays'], ['weekend', 'Weekend'], ['all', 'Every day']].filter(([k]) => PRESETS[k].length)
+    .map(([k, n]) => `<button type="button" class="cp-preset ${st.targets.size && sameSet(PRESETS[k]) ? 'on' : ''}" data-preset="${k}">${n}</button>`).join('')}
+      </div>
+      <div class="cp-days" role="group" aria-label="Days to copy to">${DAYS_SHORT.map((n, i) => `<button type="button" class="cp-day ${i === d ? 'self' : st.targets.has(i) ? 'on' : ''}"
+        ${i === d ? 'disabled aria-label="' + DAYS[i] + ' (this day)"' : `data-day="${i}" aria-pressed="${st.targets.has(i)}"`}>${n}</button>`).join('')}</div>
+      ${st.targets.size ? `<div class="label">What to copy</div>
+      <div class="seg small cp-scope">
+        <button type="button" class="${st.scope === 'both' ? 'on' : ''}" data-scope="both">Both</button>
+        <button type="button" class="${st.scope === 'store' ? 'on' : ''}" data-scope="store">Front</button>
+        <button type="button" class="${st.scope === 'kitchen' ? 'on' : ''}" data-scope="kitchen">Kitchen</button>
+      </div>
+      <p class="muted small cp-note">${st.scope === 'store' ? 'Only the store (Front) hours are copied. Their kitchen hours stay as they are.'
+    : st.scope === 'kitchen' ? 'Only the kitchen hours are copied. Their store (Front) hours stay as they are.'
+      : 'Both store (Front) and kitchen hours are copied.'}</p>` : ''}`;
+  const saveLabel = () => (st.targets.size ? `Save to ${st.targets.size + 1} days` : 'Save');
   closeModal();
   const draw = () => {
     modalRoot.innerHTML = `
     <div class="overlay" data-x><div class="modal narrow">
       <header><b>${usual ? `Usual hours — ${DAYS[d]}` : `${DAYS[d]} hours (this week only)`}</b><button class="btn icon ghost" data-x>✕</button></header>
-      <div class="label">Store</div>${hoursRow('hk', 'store', st.store, d)}
+      <div class="label">Front (store)</div>${hoursRow('hk', 'store', st.store, d)}
       <div class="label">Kitchen</div>${hoursRow('hk', 'kitchen', st.kitchen, d)}
       <p class="muted small">Leave the kitchen times empty if you don't want warnings about the kitchen.</p>
-      ${usual ? `<label class="chk everyday"><input type="checkbox" data-everyday ${st.everyDay ? 'checked' : ''}> Use these hours for every day</label>` : ''}
-      <footer>${cur.custom ? '<button class="btn ghost" data-reset>Use usual hours</button>' : ''}<button class="btn" data-x>Cancel</button><button class="btn primary" data-ok>Save</button></footer>
+      <div class="copybox">${copyBox()}</div>
+      <footer>${cur.custom ? '<button class="btn ghost" data-reset>Use usual hours</button>' : ''}<button class="btn" data-x>Cancel</button><button class="btn primary" data-ok>${saveLabel()}</button></footer>
     </div></div>`;
   };
+  // Redraw only the copy section, so half-typed times above aren't lost.
+  const drawCopy = () => {
+    const box = modalRoot.querySelector('.copybox');
+    if (box) box.innerHTML = copyBox();
+    const ok = modalRoot.querySelector('[data-ok]');
+    if (ok) ok.textContent = saveLabel();
+  };
   modalRoot.onchange = (ev) => {
-    if (ev.target.hasAttribute('data-everyday')) { st.everyDay = ev.target.checked; return; }
     const k = ev.target.dataset.hk;
     if (!k) return;
     applyHoursInput(st, k, ev.target);
     if (k.endsWith('-closed')) draw();
   };
   modalRoot.onclick = async (ev) => {
-    const t = ev.target;
-    if (t.hasAttribute('data-x')) closeModal();
+    const t = ev.target.closest('[data-preset], [data-day], [data-scope]') || ev.target;
+    if (t.dataset.preset) {
+      const days = PRESETS[t.dataset.preset];
+      st.targets = sameSet(days) ? new Set() : new Set(days);
+      drawCopy();
+    } else if (t.dataset.day) {
+      const i = +t.dataset.day;
+      if (st.targets.has(i)) st.targets.delete(i); else st.targets.add(i);
+      drawCopy();
+    } else if (t.dataset.scope) {
+      st.scope = t.dataset.scope;
+      drawCopy();
+    } else if (t.hasAttribute('data-x')) closeModal();
     else if (t.hasAttribute('data-reset')) { closeModal(); await changeWeek(`${DAYS[d]} back to usual hours`, () => setDayHours(state.weekId, d, null)); }
     else if (t.hasAttribute('data-ok')) {
       // Use whatever is in the boxes right now, even if the last change event hasn't fired.
@@ -1399,12 +1565,33 @@ function openHoursEditor(d, { usual = false } = {}) {
         if (first && !first.disabled) applyHoursInput(st, `${key}-s`, first);
       }
       closeModal();
+      const h = cleanHours(st);
+      // A copied day takes the chosen part (store and/or kitchen) and keeps the rest of its own hours.
+      const copyOnto = (base) => cleanHours({
+        store: st.scope === 'kitchen' ? base.store : st.store,
+        kitchen: st.scope === 'store' ? base.kitchen : st.kitchen,
+      });
+      const what = st.scope === 'store' ? 'Front hours' : st.scope === 'kitchen' ? 'Kitchen hours' : 'Hours';
+      const label = st.targets.size
+        ? `${what} copied from ${DAYS_SHORT[d]} to ${[...st.targets].sort().map((x) => DAYS_SHORT[x]).join(', ')}`
+        : `${DAYS[d]} hours changed`;
       if (usual) {
-        const h = cleanHours(st);
-        const next = all.map((x, i) => (st.everyDay || i === d ? h : cleanHours({ store: x.store === undefined ? [300, 1230] : x.store, kitchen: x.kitchen })));
-        await guard(() => saveSettings({ defaultHours: next }), 'Hours saved');
+        const next = all.map((x, i) => {
+          const base = { store: x.store === undefined ? [300, 1230] : x.store, kitchen: x.kitchen };
+          if (i === d) return h;
+          return st.targets.has(i) ? copyOnto(base) : cleanHours(base);
+        });
+        await guard(() => saveSettings({ defaultHours: next }), st.targets.size ? label : 'Hours saved');
       } else {
-        await changeWeek(`${DAYS[d]} hours changed`, () => setDayHours(state.weekId, d, cleanHours(st)));
+        const wid = state.weekId;
+        const week = state.week;
+        await changeWeek(label, async () => {
+          await setDayHours(wid, d, h);
+          for (const x of st.targets) {
+            const cur2 = dayHours(state.settings, week, x);
+            await setDayHours(wid, x, copyOnto({ store: cur2.store, kitchen: cur2.kitchen }));
+          }
+        });
       }
     }
   };
@@ -1687,6 +1874,7 @@ app.addEventListener('click', async (ev) => {
       prevCache = {};
       await changeWeek('Week started', () => createWeek(wid, { rows: sortedEmployees().map((e) => e.id), notes: holidaysInWeek(wid) }));
       break;
+    case 'copy-pick': openCopyPicker(wid); break;
     case 'replace-copy': {
       prevCache = {};
       const prev = await previousSavedWeek(wid);
@@ -1696,12 +1884,7 @@ app.addEventListener('click', async (ev) => {
       }
       break;
     }
-    case 'clear-week':
-      prevCache = {};
-      if (await confirmBox(`Delete the whole schedule for ${weekLabel(wid)}? (You can undo this right after.)`, 'Delete week', true)) {
-        await changeWeek('Week deleted', () => deleteWeek(wid));
-      }
-      break;
+    case 'clear-week': await deleteWeekFlow(wid); break;
     case 'row-up': case 'row-down': {
       const i = +el.dataset.i;
       const j = a === 'row-up' ? i - 1 : i + 1;
