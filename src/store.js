@@ -89,7 +89,10 @@ export function watchWeek(weekId) {
 }
 
 function normalizeWeek(w) {
-  return { rows: w.rows || [], cells: w.cells || {}, notes: w.notes || {}, hours: w.hours || {} };
+  return {
+    rows: w.rows || [], cells: w.cells || {}, notes: w.notes || {}, hours: w.hours || {},
+    closed: w.closed || {}, shared: w.shared || null,
+  };
 }
 
 // ---------- weeks ----------
@@ -122,8 +125,8 @@ export async function setRows(weekId, rows) {
   await updateDoc(weekRef(weekId), 'rows', rows, 'updatedAt', serverTimestamp());
 }
 
-export async function createWeek(weekId, { copyFrom = null, rows = [] } = {}) {
-  let data = { rows, cells: {}, notes: {}, hours: {} };
+export async function createWeek(weekId, { copyFrom = null, rows = [], notes = {} } = {}) {
+  let data = { rows, cells: {}, notes, hours: {} };
   if (copyFrom) {
     const src = await getDoc(weekRef(copyFrom));
     if (src.exists()) {
@@ -132,7 +135,7 @@ export async function createWeek(weekId, { copyFrom = null, rows = [] } = {}) {
       const keep = w.rows.filter(active);
       const cells = {};
       for (const eid of keep) if (w.cells[eid]) cells[eid] = w.cells[eid];
-      data = { rows: keep, cells, notes: {}, hours: {} };
+      data = { rows: keep, cells, notes, hours: {} };
     }
   }
   await setDoc(weekRef(weekId), { ...data, updatedAt: serverTimestamp() });
@@ -140,6 +143,34 @@ export async function createWeek(weekId, { copyFrom = null, rows = [] } = {}) {
 
 export async function deleteWeek(weekId) {
   await deleteDoc(weekRef(weekId));
+}
+
+/** Puts a week back exactly as it was (used by Undo). null = the week didn't exist. */
+export async function restoreWeek(weekId, snapshot) {
+  if (!snapshot) { await deleteDoc(weekRef(weekId)); return; }
+  const { rows, cells, notes, hours, closed, shared } = snapshot;
+  await setDoc(weekRef(weekId), { rows, cells, notes, hours, closed: closed || {}, shared: shared || null, updatedAt: serverTimestamp() });
+}
+
+/** Closes (or reopens) the store for a whole day. Closing also clears that day's shifts. */
+export async function setClosed(weekId, d, closed, clearEids = []) {
+  const args = [new FieldPath('closed', String(d)), closed ? true : deleteField()];
+  for (const eid of clearEids) args.push(new FieldPath('cells', eid, String(d)), deleteField());
+  args.push('updatedAt', serverTimestamp());
+  await updateDoc(weekRef(weekId), ...args);
+}
+
+/** Remembers what the group chat was sent, to spot changes made afterwards. */
+export async function markShared(weekId, week, days) {
+  const pick = (obj) => Object.fromEntries(Object.entries(obj || {}).filter(([k]) => days.includes(+k)));
+  const cells = {};
+  for (const eid of week.rows) {
+    const c = pick(week.cells[eid]);
+    if (Object.keys(c).length) cells[eid] = c;
+  }
+  await updateDoc(weekRef(weekId), 'shared', {
+    at: Date.now(), days, rows: week.rows, cells, notes: pick(week.notes), closed: pick(week.closed),
+  });
 }
 
 /** The most recent saved week before `weekId` (for "copy last week"). */
@@ -182,7 +213,8 @@ export async function setAvailability(id, d, value) {
 
 // ---------- time off ----------
 export async function addTimeOff(t) {
-  await addDoc(collection(db, 'timeoff'), { ...t, created: serverTimestamp() });
+  const { id, created, ...rest } = t;
+  await addDoc(collection(db, 'timeoff'), { ...rest, created: serverTimestamp() });
 }
 export async function deleteTimeOff(id) {
   await deleteDoc(doc(db, 'timeoff', id));

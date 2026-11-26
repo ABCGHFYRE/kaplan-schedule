@@ -124,6 +124,7 @@ export function cellWarnings({ cell, emp, d, date, timeoff }) {
 
 /** Hours for each day the store/kitchen is open. Week override beats the default. */
 export function dayHours(settings, week, d) {
+  if (week?.closed?.[d]) return { store: null, kitchen: null, custom: false, closedDay: true };
   const def = settings?.defaultHours?.[d] || { store: [300, 1230] };
   const ov = week?.hours?.[d] || {};
   return {
@@ -199,4 +200,75 @@ export function weekTotals(week) {
     byEmp[eid] = t;
   }
   return { byEmp, byDay, total: byDay.reduce((a, b) => a + b, 0), openEnded };
+}
+
+// ---------- holidays (auto day notes for new weeks) ----------
+function easter(y) {
+  // Anonymous Gregorian algorithm.
+  const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4;
+  const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31), day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(y, month - 1, day);
+}
+function nthWeekday(y, month, weekday, n) { // weekday 0=Sun; n=-1 means last
+  if (n > 0) {
+    const first = new Date(y, month, 1);
+    return new Date(y, month, 1 + ((weekday - first.getDay() + 7) % 7) + (n - 1) * 7);
+  }
+  const last = new Date(y, month + 1, 0);
+  return new Date(y, month, last.getDate() - ((last.getDay() - weekday + 7) % 7));
+}
+export function holidaysFor(y) {
+  const e = easter(y);
+  const mardi = new Date(e); mardi.setDate(e.getDate() - 47);
+  return [
+    [new Date(y, 0, 1), "New Year's Day"],
+    [mardi, 'Mardi Gras'],
+    [e, 'Easter'],
+    [nthWeekday(y, 4, 1, -1), 'Memorial Day'],
+    [new Date(y, 6, 4), 'Fourth of July'],
+    [nthWeekday(y, 8, 1, 1), 'Labor Day'],
+    [new Date(y, 9, 31), 'Halloween'],
+    [nthWeekday(y, 10, 4, 4), 'Thanksgiving'],
+    [new Date(y, 11, 24), 'Christmas Eve'],
+    [new Date(y, 11, 25), 'Christmas'],
+    [new Date(y, 11, 31), "New Year's Eve"],
+  ].map(([dt, name]) => [ymd(dt), name]);
+}
+/** {dayIndex: holiday name} for the 7 days starting at weekId. */
+export function holidaysInWeek(weekId) {
+  const out = {};
+  const years = new Set([parseYmd(weekId).getFullYear(), parseYmd(addDays(weekId, 6)).getFullYear()]);
+  const all = new Map([...years].flatMap((y) => holidaysFor(y)));
+  for (let d = 0; d < 7; d++) {
+    const name = all.get(addDays(weekId, d));
+    if (name) out[String(d)] = name;
+  }
+  return out;
+}
+
+/** Same data → same text, whatever order the keys came back in. */
+export function stableStr(v) {
+  if (Array.isArray(v)) return `[${v.map(stableStr).join(',')}]`;
+  if (v && typeof v === 'object') return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${stableStr(v[k])}`).join(',')}}`;
+  return JSON.stringify(v ?? null);
+}
+
+/** How many shifts/notes changed on the shared days since the image was shared. */
+export function changesSinceShared(week) {
+  const sh = week?.shared;
+  if (!sh) return null;
+  let n = 0;
+  const eids = new Set([...(week.rows || []), ...Object.keys(sh.cells || {})]);
+  for (const d of sh.days || []) {
+    for (const eid of eids) {
+      const now = week.rows.includes(eid) ? week.cells?.[eid]?.[d] : undefined;
+      const then = (sh.rows || []).includes(eid) ? sh.cells?.[eid]?.[d] : undefined;
+      if (stableStr(now) !== stableStr(then)) n++;
+    }
+    if ((week.notes?.[d] || '') !== (sh.notes?.[d] || '')) n++;
+    if (!!week.closed?.[d] !== !!sh.closed?.[d]) n++;
+  }
+  return n;
 }

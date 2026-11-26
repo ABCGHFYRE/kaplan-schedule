@@ -51,6 +51,7 @@ export async function renderWeekPng({ weekId, week, employees, days = [0, 1, 2, 
 
   const measure = document.createElement('canvas').getContext('2d');
   const notes = days.map((d) => (week.notes?.[d] || '').trim());
+  const closed = days.map((d) => !!week.closed?.[d]);
   measure.font = font(800, 15);
   const noteLines = notes.map((n) => (n ? wrap(measure, n, dayW - 20, 2) : []));
   const maxNoteLines = Math.max(0, ...noteLines.map((l) => l.length));
@@ -58,12 +59,14 @@ export async function renderWeekPng({ weekId, week, employees, days = [0, 1, 2, 
 
   // People with nothing on the schedule this week (no shifts, no OFF) are left out of the picture.
   const shown = week.rows.filter((eid) => days.some((d) => {
+    if (week.closed?.[d]) return false;
     const c = week.cells?.[eid]?.[d];
     return c && (c.off || c.blocks?.length || c.note);
   }));
   const rows = shown.map((eid) => {
     const emp = employees.get(eid) || { name: eid, role: 'cashier' };
-    const cells = days.map((d) => {
+    const cells = days.map((d, i) => {
+      if (closed[i]) return { kind: 'closed', pills: [], note: '' };
       const c = week.cells?.[eid]?.[d];
       if (!c) return { kind: 'empty', pills: [], note: '' };
       if (c.off) return { kind: 'off', pills: [], note: c.note || '' };
@@ -230,6 +233,7 @@ export async function renderWeekPng({ weekId, week, employees, days = [0, 1, 2, 
       const mid = colX(d) + dayW / 2;
       let cy = y + (r.h - cellHeight(c)) / 2;
       g.textAlign = 'center';
+      if (c.kind === 'closed') return; // drawn once for the whole column below
       if (c.kind === 'off') {
         const pw = 76;
         roundRect(g, mid - pw / 2, cy + 7, pw, PILL_H - 14, 14);
@@ -273,6 +277,28 @@ export async function renderWeekPng({ weekId, week, employees, days = [0, 1, 2, 
     });
     y += r.h;
   });
+
+  // ---- closed days: one grey column with CLOSED down the middle
+  const bodyTop = top + dayHeadH;
+  for (let d = 0; d < n; d++) {
+    if (!closed[d]) continue;
+    g.fillStyle = '#eef1ef';
+    g.fillRect(colX(d), bodyTop, dayW, bodyH);
+    g.save();
+    g.beginPath();
+    g.rect(colX(d), bodyTop, dayW, bodyH);
+    g.clip();
+    g.strokeStyle = 'rgba(0,0,0,0.035)';
+    g.lineWidth = 10;
+    for (let k = -bodyH; k < dayW + bodyH; k += 26) {
+      g.beginPath(); g.moveTo(colX(d) + k, bodyTop); g.lineTo(colX(d) + k - bodyH, bodyTop + bodyH); g.stroke();
+    }
+    g.restore();
+    g.fillStyle = '#7d8a84';
+    g.font = font(900, 22);
+    g.textAlign = 'center';
+    drawSpaced(g, 'CLOSED', colX(d) + dayW / 2, bodyTop + Math.min(bodyH / 2, 140), 4);
+  }
 
   // ---- grid lines
   g.strokeStyle = C.line;

@@ -1,13 +1,13 @@
 import { auth, login, logout, onAuthStateChanged } from './firebase.js';
 import {
   state, subscribe, startData, stopData, watchWeek, setCell, setCells, setNote, setDayHours, setRows,
-  createWeek, deleteWeek, previousSavedWeek, addEmployee, updateEmployee, setAvailability, addTimeOff,
+  createWeek, deleteWeek, restoreWeek, setClosed, markShared, loadWeeks, previousSavedWeek, addEmployee, updateEmployee, setAvailability, addTimeOff,
   deleteTimeOff, saveSettings, importHistory, exportAll, DEFAULT_SETTINGS,
 } from './store.js';
 import {
   DAYS, DAYS_SHORT, MONTHS, ROLES, PALETTE, esc, ymd, addDays, mondayOf, weekLabel, dayLabel, prettyDate,
   fmtTime, fmtBlock, timeOptions, cellHours, fmtHours, blockRole, cellWarnings, coverage, weekTotals,
-  dayHours, parseYmd,
+  dayHours, parseYmd, holidaysInWeek, changesSinceShared,
 } from './util.js';
 import { renderWeekPng } from './png.js';
 
@@ -240,10 +240,29 @@ function timeSelect(attrs, value, { open = false, closed = false, from = 240, to
   return `<select ${attrs}>${opts.join('')}</select>`;
 }
 
-function toast(msg, kind = '') {
-  toastRoot.innerHTML = `<div class="toast ${kind}">${esc(msg)}</div>`;
+function toast(msg, kind = '', undo = null) {
+  toastRoot.innerHTML = `<div class="toast ${kind} ${undo ? 'has-undo' : ''}"><span>${esc(msg)}</span>${undo ? '<button class="undo" data-undo>Undo</button>' : ''}</div>`;
+  toastRoot.onclick = undo ? async (ev) => {
+    if (!ev.target.closest('[data-undo]')) return;
+    toastRoot.innerHTML = '';
+    clearTimeout(toast.t);
+    try { await undo(); toast('Undone', 'ok'); } catch (e) { console.error(e); toast("Couldn't undo", 'bad'); }
+  } : null;
   clearTimeout(toast.t);
-  toast.t = setTimeout(() => { toastRoot.innerHTML = ''; }, 3200);
+  toast.t = setTimeout(() => { toastRoot.innerHTML = ''; }, undo ? 7000 : 3200);
+}
+
+/** Runs a change to the open week, then offers Undo (puts the whole week back as it was). */
+async function changeWeek(label, fn) {
+  const wid = state.weekId;
+  const before = state.week ? JSON.parse(JSON.stringify(state.week)) : null;
+  try {
+    await fn();
+    toast(label, 'ok', () => restoreWeek(wid, before));
+  } catch (e) {
+    console.error(e);
+    toast(e.code === 'permission-denied' ? 'Permission denied — check the Firestore rules.' : (e.message || String(e)), 'bad');
+  }
 }
 
 async function guard(fn, okMsg) {
@@ -264,6 +283,7 @@ function weekIssues(week) {
   for (const eid of week.rows) {
     if (totals.byEmp[eid] > ot) issues.push({ kind: 'ot', text: `${empLabel(eid)} is scheduled ${fmtHours(totals.byEmp[eid])} hours (over ${ot}).` });
     for (let d = 0; d < 7; d++) {
+      if (week.closed?.[d]) continue;
       const cell = week.cells[eid]?.[d];
       for (const w of cellWarnings({ cell, emp: emp(eid), d, date: addDays(state.weekId, d), timeoff: state.timeoff })) {
         issues.push({ kind: 'cell', eid, d, text: `${empLabel(eid)} (${DAYS_SHORT[d]}): ${w}` });
@@ -359,11 +379,21 @@ function viewWeek(r) {
   const { totals, issues } = weekIssues(week);
   const ot = state.settings.overtime || 40;
   const today = ymd(new Date());
+  const changed = changesSinceShared(week);
+  const sharedInfo = week.shared ? (() => {
+    const t = new Date(week.shared.at);
+    return `${DAYS_SHORT[(t.getDay() + 6) % 7]} ${t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  })() : '';
+  const shareBanner = changed ? `
+    <div class="sharenote">
+      <span>✎ You changed <b>${changed} ${changed === 1 ? 'thing' : 'things'}</b> since you shared this week (${esc(sharedInfo)}).</span>
+      <button class="btn small primary" data-action="png">Share again</button>
+    </div>` : '';
   const tools = `
+      ${week.shared && !changed ? `<span class="sharedpill" title="Shared ${esc(sharedInfo)}">✓ Shared</span>` : ''}
       <button class="btn primary" data-action="png" title="See a picture of this week and send it to the group chat">Share image</button>
       <div class="menu"><button class="btn" data-action="menu">More ▾</button>
         <div class="menu-list">
-          <button data-action="print">Print</button>
           <button data-action="replace-copy">Replace with last week's schedule</button>
           <button data-action="clear-week" class="danger">Delete this week</button>
         </div>
@@ -390,7 +420,7 @@ function viewWeek(r) {
     <div class="tips">
       <b>How it works</b>
       <span><i>1</i> Tap a box to set a shift</span>
-      <span><i>2</i> Tap a day to add a note</span>
+      <span><i>2</i> Tap a day to add a note or close the store</span>
       <span><i>3</i> <b>Share image</b> → send to the group chat</span>
       <button class="btn small" data-action="hide-tips">Got it</button>
     </div>`;
@@ -409,9 +439,9 @@ function viewWeek(r) {
     const tabs = DAYS_SHORT.map((n, i) => {
       const x = parseYmd(addDays(r.weekId, i));
       return `<button class="daytab ${i === d ? 'on' : ''} ${addDays(r.weekId, i) === today ? 'today' : ''}" data-action="pick-day" data-d="${i}">
-        <span>${n}</span><b>${x.getDate()}</b>${week.notes[i] ? '<i class="pip"></i>' : ''}</button>`;
+        <span>${n}</span><b>${x.getDate()}</b>${week.closed?.[i] ? '<em class="bad">closed</em>' : ''}${week.notes[i] ? '<i class="pip"></i>' : ''}</button>`;
     }).join('');
-    const list = week.rows.map((eid) => {
+    const list = week.closed?.[d] ? `<div class="mclosed"><b>Store closed</b><span class="muted">Nobody is scheduled on ${DAYS[d]}.</span><button class="btn small" data-action="note" data-d="${d}">Reopen or edit</button></div>` : week.rows.map((eid) => {
       const e = emp(eid);
       const { inner, warns } = cellHtml(eid, d, r, { big: true });
       return `<button class="mrow ${warns.length ? 'warn' : ''} ${flashCells.has(`${eid}:${d}`) ? 'flash' : ''}" data-action="cell" data-eid="${eid}" data-d="${d}">
@@ -421,11 +451,11 @@ function viewWeek(r) {
       </button>`;
     }).join('');
     return `${weekNav(r, tools)}
-    ${tips}${problems}
+    ${shareBanner}${tips}${problems}
     <div class="daytabs">${tabs}</div>
     <div class="card mday">
       <div class="mdayhead"><b>${DAYS[d]}</b>
-        <button class="notebtn ${week.notes[d] ? 'has' : ''}" data-action="note" data-d="${d}">${week.notes[d] ? esc(week.notes[d]) : '+ Add day note'}</button></div>
+        <button class="notebtn ${week.notes[d] ? 'has' : ''}" data-action="note" data-d="${d}">${week.notes[d] ? esc(week.notes[d]) : '+ Note / closed'}</button></div>
       ${list || '<p class="muted">Nobody on this week yet.</p>'}
     </div>
     ${addPerson}`;
@@ -436,14 +466,19 @@ function viewWeek(r) {
     const date = addDays(r.weekId, d);
     const x = parseYmd(date);
     const note = week.notes[d];
-    return `<th class="dayhead ${date === today ? 'today' : ''}" data-action="note" data-d="${d}" title="Click to ${note ? 'edit' : 'add'} a note for this day">
+    const closedDay = !!week.closed?.[d];
+    return `<th class="dayhead ${date === today ? 'today' : ''} ${closedDay ? 'closedday' : ''}" data-action="note" data-d="${d}" title="Click to add a note or mark the store closed">
       <span class="dn">${n}</span> <span class="dd">${x.getMonth() + 1}/${x.getDate()}</span>
-      ${note ? `<span class="dnote">${esc(note)}</span>` : '<span class="dnote add">+ note</span>'}
+      ${closedDay ? '<span class="closedtag">Closed</span>' : ''}
+      ${note ? `<span class="dnote">${esc(note)}</span>` : (closedDay ? '' : '<span class="dnote add">+ note</span>')}
     </th>`;
   }).join('');
   const body = week.rows.map((eid, i) => {
     const e = emp(eid);
     const tds = DAYS.map((_, d) => {
+      if (week.closed?.[d]) {
+        return i === 0 ? `<td class="cell closedcol" rowspan="${week.rows.length}" data-action="note" data-d="${d}" title="Store closed. Click to reopen."><span>CLOSED</span></td>` : '';
+      }
       const { inner, warns } = cellHtml(eid, d, r);
       const date = addDays(r.weekId, d);
       return `<td class="cell ${week.cells[eid]?.[d]?.off ? 'is-off' : ''} ${warns.length ? 'warn' : ''} ${date === today ? 'today' : ''} ${flashCells.has(`${eid}:${d}`) ? 'flash' : ''}" data-action="cell" data-eid="${eid}" data-d="${d}" title="${esc(warns.join('\n'))}">${inner}</td>`;
@@ -463,9 +498,8 @@ function viewWeek(r) {
     </tr>`;
   }).join('');
   return `${weekNav(r, tools)}
-  ${tips}${problems}
-  <div class="tablewrap card" id="print-area">
-    <div class="print-title">Kaplan Food — Week of ${weekLabel(r.weekId)}</div>
+  ${shareBanner}${tips}${problems}
+  <div class="tablewrap card">
     <table class="sched">
       <thead><tr><th class="corner"></th>${head}<th class="hrs">Hours</th></tr></thead>
       <tbody>${body}</tbody>
@@ -559,10 +593,23 @@ function openCellEditor(eid, d) {
         <div class="label">Same shift on other days <span class="muted">(optional)</span></div>
         <div class="chips">${DAYS_SHORT.map((n, i) => (i === d ? '' : `<label class="chk"><input type="checkbox" data-apply="${i}" ${st.applyTo.has(i) ? 'checked' : ''}>${n}</label>`)).join('')}</div>
 
-        <footer class="split">
+        <details class="moreopts">
+          <summary>More options</summary>
+          <div class="mo-row">
+            <span>Swap ${DAYS[d]} with</span>
+            <select data-swapwith><option value="">Choose…</option>${week.rows.filter((x) => x !== eid).map((x) => `<option value="${x}">${esc(empLabel(x))}</option>`).join('')}</select>
+            <button class="btn small" data-swap>Swap</button>
+          </div>
+          <div class="mo-row">
+            <span>Copy ${esc(e.name)}'s whole week to</span>
+            <select data-copyto><option value="">Choose…</option>${sortedEmployees().filter((x) => x.id !== eid).map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select>
+            <button class="btn small" data-copyweek>Copy</button>
+          </div>
           <button class="linkbtn danger" data-rmweek>Take ${esc(e.name)} off this week</button>
-          <span><button class="btn" data-close>Cancel</button>
-          <button class="btn primary" data-save>Save</button></span>
+        </details>
+        <footer>
+          <button class="btn" data-close>Cancel</button>
+          <button class="btn primary" data-save>Save</button>
         </footer>
       </div>
     </div>`;
@@ -572,7 +619,8 @@ function openCellEditor(eid, d) {
     const changes = [{ eid, d, cell }, ...[...st.applyTo].map((x) => ({ eid, d: x, cell }))];
     changes.forEach((c) => flashCells.add(`${c.eid}:${c.d}`));
     close();
-    await guard(() => setCells(state.weekId, changes));
+    const what = !cell ? 'Cleared' : cell.off ? 'Marked as day off' : 'Shift saved';
+    await changeWeek(`${what} for ${e.name}`, () => setCells(state.weekId, changes));
   };
 
   modalRoot.onclick = (ev) => {
@@ -585,6 +633,19 @@ function openCellEditor(eid, d) {
     } else if (t.hasAttribute('data-off')) save({ off: true, note: st.note });
     else if (t.hasAttribute('data-clear')) save(st.note ? { note: st.note } : null);
     else if (t.hasAttribute('data-rmweek')) { close(); removeFromWeek(eid); }
+    else if (t.hasAttribute('data-swap')) {
+      const other = modalRoot.querySelector('[data-swapwith]').value;
+      if (!other) { toast('Choose who to swap with', 'bad'); return; }
+      const mine = week.cells[eid]?.[d] || null;
+      const theirs = week.cells[other]?.[d] || null;
+      flashCells.add(`${eid}:${d}`); flashCells.add(`${other}:${d}`);
+      close();
+      changeWeek(`Swapped ${DAYS[d]}: ${e.name} ↔ ${empLabel(other)}`, () => setCells(state.weekId, [{ eid, d, cell: retarget(theirs, other, eid) }, { eid: other, d, cell: retarget(mine, eid, other) }]));
+    } else if (t.hasAttribute('data-copyweek')) {
+      const other = modalRoot.querySelector('[data-copyto]').value;
+      if (!other) { toast('Choose who to copy to', 'bad'); return; }
+      copyWeekTo(eid, other);
+    }
     else if (t.hasAttribute('data-addblock')) {
       const last = st.blocks[st.blocks.length - 1];
       const s = last.e != null ? Math.min(last.e + 120, 1200) : null;
@@ -718,6 +779,7 @@ async function openImagePreview(weekId) {
     } else if (t.hasAttribute('data-share')) {
       try {
         await navigator.share({ files: [fileFor()], title: `Schedule · ${daysLabel(weekId, st.days)}` });
+        await recordShared();
       } catch (e) {
         if (e.name !== 'AbortError') toast('Sharing didn\'t work here. Try Download instead.', 'bad');
       }
@@ -725,6 +787,7 @@ async function openImagePreview(weekId) {
       try {
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': st.blob })]);
         toast('Copied — paste it into the group chat', 'ok');
+        await recordShared();
       } catch {
         toast('Couldn\'t copy here. Try Download instead.', 'bad');
       }
@@ -736,10 +799,89 @@ async function openImagePreview(weekId) {
       link.click();
       link.remove();
       toast('Image downloaded', 'ok');
+      await recordShared();
     }
+  };
+  // Remember what was sent so the app can say "you changed N things since you shared".
+  const recordShared = async () => {
+    if (state.weekId !== weekId || !state.week) return;
+    try { await markShared(weekId, state.week, st.days); } catch (e) { console.error(e); }
   };
   await build();
   draw();
+}
+
+function openDayEditor(d) {
+  const wid = state.weekId;
+  const week = state.week;
+  const date = addDays(wid, d);
+  const working = week.rows.filter((eid) => week.cells[eid]?.[d]);
+  const st = { note: week.notes[d] || '', closed: !!week.closed?.[d] };
+  const holiday = holidaysInWeek(wid)[String(d)];
+  closeModal();
+  const draw = () => {
+    modalRoot.innerHTML = `
+    <div class="overlay" data-x><div class="modal narrow">
+      <header><div><b>${DAYS[d]}</b><div class="muted">${prettyDate(date).replace(/, \d{4}$/, '')}</div></div>
+        <button class="btn icon ghost" data-x aria-label="Close">✕</button></header>
+      <div class="label">Note for this day <span class="muted">(shows on the schedule and the image)</span></div>
+      <input type="text" data-daynote value="${esc(st.note)}" placeholder="${holiday ? esc(holiday) : 'e.g. Closing early at 6'}">
+      ${holiday && !st.note ? `<button class="linkbtn" data-useholiday>Use “${esc(holiday)}”</button>` : ''}
+      <label class="closedswitch ${st.closed ? 'on' : ''}">
+        <input type="checkbox" data-dayclosed ${st.closed ? 'checked' : ''}>
+        <span class="sw" aria-hidden="true"></span>
+        <span><b>Store closed this day</b><small>Nobody is scheduled. Shows “CLOSED” on the image.</small></span>
+      </label>
+      ${st.closed && !week.closed?.[d] && working.length ? `<p class="problems slim">${working.length} ${working.length === 1 ? 'shift' : 'shifts'} on this day will be cleared. You can undo this.</p>` : ''}
+      <footer><button class="btn" data-x>Cancel</button><button class="btn primary" data-ok>Save</button></footer>
+    </div></div>`;
+  };
+  modalRoot.oninput = (ev) => { if (ev.target.hasAttribute('data-daynote')) st.note = ev.target.value; };
+  modalRoot.onchange = (ev) => { if (ev.target.hasAttribute('data-dayclosed')) { st.closed = ev.target.checked; draw(); } };
+  modalRoot.onclick = async (ev) => {
+    const t = ev.target.closest('button') || ev.target;
+    if (t.hasAttribute('data-x')) { closeModal(); return; }
+    if (t.hasAttribute('data-useholiday')) { st.note = holiday; draw(); return; }
+    if (t.hasAttribute('data-ok')) {
+      closeModal();
+      const noteChanged = st.note.trim() !== (week.notes[d] || '');
+      const closedChanged = st.closed !== !!week.closed?.[d];
+      if (!noteChanged && !closedChanged) return;
+      await changeWeek(closedChanged ? (st.closed ? `${DAYS[d]} marked closed` : `${DAYS[d]} reopened`) : 'Day note saved', async () => {
+        if (noteChanged) await setNote(wid, d, st.note.trim());
+        if (closedChanged) await setClosed(wid, d, st.closed, st.closed ? working : []);
+      });
+    }
+  };
+  draw();
+}
+
+/** Moves a shift to another person but keeps where it's worked (a kitchen shift stays kitchen). */
+function retarget(cell, fromId, toId) {
+  if (!cell || !cell.blocks) return cell || null;
+  const from = emp(fromId);
+  const to = emp(toId);
+  return {
+    ...cell,
+    blocks: cell.blocks.map((b) => {
+      const role = blockRole(b, from);
+      const { role: _old, ...rest } = b;
+      return role === (to.role || 'cashier') ? rest : { ...rest, role };
+    }),
+  };
+}
+
+async function copyWeekTo(from, to) {
+  const week = state.week;
+  const theirs = Object.keys(week.cells[to] || {}).length;
+  if (theirs && !(await confirmBox(`${empLabel(to)} already has shifts this week. Replace them with ${empLabel(from)}'s week?`, 'Replace', true))) return;
+  closeModal();
+  const changes = [0, 1, 2, 3, 4, 5, 6].map((d) => ({ eid: to, d, cell: retarget(week.cells[from]?.[d], from, to) }));
+  changes.forEach((c) => flashCells.add(`${c.eid}:${c.d}`));
+  await changeWeek(`Copied ${empLabel(from)}'s week to ${empLabel(to)}`, async () => {
+    if (!week.rows.includes(to)) await setRows(state.weekId, [...week.rows, to]);
+    await setCells(state.weekId, changes);
+  });
 }
 
 async function removeFromWeek(eid) {
@@ -747,10 +889,10 @@ async function removeFromWeek(eid) {
   const week = state.week;
   const has = Object.keys(week.cells[eid] || {}).length;
   const msg = has
-    ? `Take ${empLabel(eid)} off this week? Their shifts for this week will be erased. (They stay on your team.)`
+    ? `Take ${empLabel(eid)} off this week? Their shifts for this week will be erased. (They stay on your team, and you can undo this.)`
     : `Take ${empLabel(eid)} off this week? (They stay on your team.)`;
   if (!(await confirmBox(msg, 'Take off', true))) return;
-  await guard(async () => {
+  await changeWeek(`${empLabel(eid)} taken off this week`, async () => {
     await setRows(wid, week.rows.filter((x) => x !== eid));
     if (has) await setCells(wid, [0, 1, 2, 3, 4, 5, 6].map((d) => ({ eid, d, cell: null })));
   });
@@ -834,7 +976,7 @@ function viewCoverage(r) {
     const bad = c.storeGaps.length || c.gaps.kitchen.length || c.gaps.cashier.length;
     const x = parseYmd(addDays(r.weekId, i));
     return `<button class="daytab ${i === d ? 'on' : ''} ${addDays(r.weekId, i) === today ? 'today' : ''}" data-action="pick-day" data-d="${i}">
-      <span>${n}</span><b>${x.getDate()}</b><em class="${bad ? 'bad' : 'good'}">${bad ? 'gaps' : '✓'}</em></button>`;
+      <span>${n}</span><b>${x.getDate()}</b><em class="${week.closed?.[i] ? 'muted' : bad ? 'bad' : 'good'}">${week.closed?.[i] ? 'closed' : bad ? 'gaps' : '✓'}</em></button>`;
   }).join('');
   const c = covs[d];
   const hrs = c.hours;
@@ -861,9 +1003,9 @@ function viewCoverage(r) {
   <div class="daytabs">${tabs}</div>
   <section class="card day">
     <header class="covhead">
-      <div><h3>${DAYS[d]}${week.notes[d] ? ` <span class="badge">${esc(week.notes[d])}</span>` : ''}</h3>
+      <div><h3>${DAYS[d]}${week.closed?.[d] ? ' <span class="badge bad">Store closed</span>' : ''}${week.notes[d] ? ` <span class="badge">${esc(week.notes[d])}</span>` : ''}</h3>
         <div class="hourline">Store open <b>${fmtRange(hrs.store)}</b> · Kitchen open <b>${fmtRange(hrs.kitchen)}</b>${hrs.custom ? ' <span class="badge">changed for this week</span>' : ''}</div></div>
-      <button class="btn small" data-action="edit-hours" data-d="${d}">Change hours for this day</button>
+      ${week.closed?.[d] ? `<button class="btn small" data-action="note" data-d="${d}">Reopen this day</button>` : `<button class="btn small" data-action="edit-hours" data-d="${d}">Change hours for this day</button>`}
     </header>
     ${c.storeGaps.length ? `<div class="problems slim">⚠ Nobody in the store ${range(c.storeGaps)}</div>` : ''}
     <div class="timeline"><div class="ticks">${ticks.join('')}</div>${lane('kitchen')}${lane('cashier')}</div>
@@ -986,7 +1128,8 @@ function viewPeople() {
       </div>
       <button class="pinfo" data-action="avail" data-eid="${e.id}"><span class="muted small">Can work</span><span>${esc(availSummary(e))} <span class="changelink">Change</span></span></button>
       <div class="poff">${mine.map((t) => `<span class="offpill">Off ${offText(t)}${t.note ? ` · ${esc(t.note)}` : ''} <button data-action="del-off" data-id="${t.id}" title="Delete" aria-label="Delete time off">✕</button></span>`).join('')}
-        <button class="btn small" data-action="add-off" data-eid="${e.id}">+ Time off</button></div>
+        <button class="btn small" data-action="add-off" data-eid="${e.id}">+ Time off</button>
+        <button class="btn small ghost" data-action="history" data-eid="${e.id}">History</button></div>
       <button class="btn small ghost" data-action="deactivate" data-eid="${e.id}" title="${esc(e.name)} no longer works here">Remove</button>
     </div>`;
   };
@@ -1005,6 +1148,60 @@ function availSummary(e) {
   const keys = Object.keys(a).sort();
   if (!keys.length) return 'Any time';
   return keys.map((k) => (a[k].off ? `not ${DAYS_SHORT[k]}` : `${DAYS_SHORT[k]} ${fmtTime(a[k].s)}–${fmtTime(a[k].e)}`)).join(', ');
+}
+
+async function openHistory(eid) {
+  const e = emp(eid);
+  const st = { weeks: 8, data: [], loading: true };
+  closeModal();
+  const end = nextMonday();
+  const load = async () => {
+    st.loading = true;
+    draw();
+    const from = addDays(end, -7 * (st.weeks - 1));
+    const got = await loadWeeks(from, end);
+    const byId = new Map(got.map((w) => [w.id, w]));
+    st.data = [];
+    for (let i = 0; i < st.weeks; i++) {
+      const id = addDays(end, -7 * i);
+      st.data.push({ id, week: byId.get(id) || null });
+    }
+    st.loading = false;
+    draw();
+  };
+  const cellText = (w, d) => {
+    if (w.closed?.[d]) return '<span class="muted">closed</span>';
+    const c = w.cells?.[eid]?.[d];
+    if (!c) return '';
+    if (c.off) return '<span class="offtag">Off</span>';
+    return (c.blocks || []).map((b) => `<span class="hshift">${fmtBlock(b)}</span>`).join('');
+  };
+  const draw = () => {
+    const rows = st.data.map(({ id, week: w }) => {
+      const on = w && w.rows.includes(eid);
+      const hrs = on ? weekTotals({ ...w, rows: [eid] }).byEmp[eid] : null;
+      return `<tr><th>${weekLabel(id).replace(/, \d{4}$/, '')}<small>${relWeek(id) || parseYmd(id).getFullYear()}</small></th>
+        ${on ? DAYS_SHORT.map((_, d) => `<td>${cellText(w, d)}</td>`).join('') : `<td colspan="7" class="muted small">${w ? 'Not on the schedule this week' : 'No schedule made'}</td>`}
+        <td class="hnum">${hrs == null ? '—' : fmtHours(hrs)}</td></tr>`;
+    }).join('');
+    const worked = st.data.filter(({ week: w }) => w && w.rows.includes(eid));
+    const avg = worked.length ? worked.reduce((t, { week: w }) => t + weekTotals({ ...w, rows: [eid] }).byEmp[eid], 0) / worked.length : 0;
+    modalRoot.innerHTML = `
+    <div class="overlay" data-x><div class="modal history">
+      <header><div class="hist-title">${avatar(e, 'big')}<div><b>${esc(e.name)}'s schedule</b><div class="muted small">Last ${st.weeks} weeks${worked.length ? ` · about ${fmtHours(Math.round(avg * 2) / 2)} hours a week` : ''}</div></div></div>
+        <button class="btn icon ghost" data-x aria-label="Close">✕</button></header>
+      ${st.loading && !st.data.length ? loading() : `<div class="histwrap ${st.loading ? 'loading' : ''}"><table class="histtable">
+        <thead><tr><th>Week</th>${DAYS_SHORT.map((n) => `<th>${n}</th>`).join('')}<th>Hrs</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+      <footer><button class="btn" data-more>Show 8 more weeks</button><button class="btn primary" data-x>Done</button></footer>`}
+    </div></div>`;
+  };
+  modalRoot.onclick = async (ev) => {
+    const t = ev.target.closest('button') || ev.target;
+    if (t.hasAttribute('data-x')) closeModal();
+    else if (t.hasAttribute('data-more') && !st.loading) { st.weeks += 8; await load(); }
+  };
+  await load();
 }
 
 function openTimeOffForm(eid) {
@@ -1157,37 +1354,32 @@ app.addEventListener('click', async (ev) => {
     case 'edit-hours': openHoursEditor(+el.dataset.d); break;
     case 'usual-hours': openHoursEditor(+el.dataset.d, { usual: true }); break;
     case 'cell': openCellEditor(el.dataset.eid, +el.dataset.d); break;
-    case 'note': {
-      const d = +el.dataset.d;
-      const res = await openPrompt({ title: `${DAYS[d]} note`, label: 'Shows above the day (holiday, closing early…)', value: week.notes[d] || '', placeholder: 'e.g. Happy Thanksgiving — closed' });
-      if (res) await guard(() => setNote(wid, d, res.v.trim()));
-      break;
-    }
+    case 'note': openDayEditor(+el.dataset.d); break;
     case 'create-copy': {
       prevCache = {};
       const prev = await previousSavedWeek(wid);
       if (!prev) { toast('There is no earlier week to copy. Starting blank.'); }
-      await guard(() => createWeek(wid, prev ? { copyFrom: prev } : { rows: sortedEmployees().map((e) => e.id) }),
-        prev ? `Copied from week of ${weekLabel(prev)}` : 'Blank week created');
+      await changeWeek(prev ? `Copied from the week of ${weekLabel(prev)}` : 'Week started',
+        () => createWeek(wid, prev ? { copyFrom: prev, notes: holidaysInWeek(wid) } : { rows: sortedEmployees().map((e) => e.id), notes: holidaysInWeek(wid) }));
       break;
     }
     case 'create-blank':
       prevCache = {};
-      await guard(() => createWeek(wid, { rows: sortedEmployees().map((e) => e.id) }), 'Blank week created');
+      await changeWeek('Week started', () => createWeek(wid, { rows: sortedEmployees().map((e) => e.id), notes: holidaysInWeek(wid) }));
       break;
     case 'replace-copy': {
       prevCache = {};
       const prev = await previousSavedWeek(wid);
       if (!prev) { toast('No earlier week to copy.'); break; }
-      if (await confirmBox(`Replace this whole week with a copy of the week of ${weekLabel(prev)}? Your changes to this week will be lost.`, 'Replace', true)) {
-        await guard(() => createWeek(wid, { copyFrom: prev }), 'Week replaced');
+      if (await confirmBox(`Replace this whole week with a copy of the week of ${weekLabel(prev)}? (You can undo this.)`, 'Replace', true)) {
+        await changeWeek('Week replaced', () => createWeek(wid, { copyFrom: prev, notes: holidaysInWeek(wid) }));
       }
       break;
     }
     case 'clear-week':
       prevCache = {};
-      if (await confirmBox(`Delete the whole schedule for ${weekLabel(wid)}? This can't be undone.`, 'Delete week', true)) {
-        await guard(() => deleteWeek(wid), 'Week deleted');
+      if (await confirmBox(`Delete the whole schedule for ${weekLabel(wid)}? (You can undo this right after.)`, 'Delete week', true)) {
+        await changeWeek('Week deleted', () => deleteWeek(wid));
       }
       break;
     case 'row-up': case 'row-down': {
@@ -1205,7 +1397,6 @@ app.addEventListener('click', async (ev) => {
       if (tipEl) { tipEl.classList.add('leaving'); setTimeout(() => render(true), 260); } else render(true);
       break;
     }
-    case 'print': window.print(); break;
     case 'png': {
       el.disabled = true;
       try {
@@ -1221,7 +1412,11 @@ app.addEventListener('click', async (ev) => {
     case 'add-off': openTimeOffForm(el.dataset.eid); break;
     case 'deactivate':
       if (await confirmBox(`Remove ${empLabel(el.dataset.eid)}? They stay in old schedules and won't be copied into new weeks. You can bring them back later.`, 'Remove', true)) {
-        await guard(() => updateEmployee(el.dataset.eid, { active: false }));
+        const id = el.dataset.eid;
+        await guard(async () => {
+          await updateEmployee(id, { active: false });
+          toast(`${empLabel(id)} removed`, 'ok', () => updateEmployee(id, { active: true }));
+        });
       }
       break;
     case 'reactivate': await guard(() => updateEmployee(el.dataset.eid, { active: true }), `${empLabel(el.dataset.eid)} is back`); break;
@@ -1231,9 +1426,17 @@ app.addEventListener('click', async (ev) => {
       break;
     }
     case 'avail': openAvailability(el.dataset.eid); break;
-    case 'del-off':
-      if (await confirmBox('Delete this time off?', 'Delete', true)) await guard(() => deleteTimeOff(el.dataset.id));
+    case 'history': openHistory(el.dataset.eid); break;
+    case 'del-off': {
+      const t = state.timeoff.find((x) => x.id === el.dataset.id);
+      if (await confirmBox('Delete this time off?', 'Delete', true)) {
+        await guard(async () => {
+          await deleteTimeOff(el.dataset.id);
+          if (t) toast('Time off deleted', 'ok', () => addTimeOff(t));
+        });
+      }
       break;
+    }
     case 'qs-del': {
       const qs = state.settings.quickShifts.slice();
       qs.splice(+el.dataset.i, 1);
