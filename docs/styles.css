@@ -197,11 +197,11 @@ td.hrs.ot { color: var(--bad); background: var(--bad-soft); }
 
 /* ---------- modal ---------- */
 .overlay { position: fixed; inset: 0; background: rgba(15, 25, 20, .45); display: grid; place-items: center; z-index: 50; padding: 1rem; }
-.modal { background: #fff; border-radius: 18px; width: min(560px, 100%); max-height: 92vh; overflow: auto; padding: 1.2rem 1.35rem; box-shadow: 0 20px 60px rgba(0,0,0,.25); }
-.modal.narrow { width: min(420px, 100%); }
-.modal header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: .8rem; gap: .5rem; font-size: 1.1rem; }
-.modal footer { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1.2rem; flex-wrap: wrap; }
-.modal input[type=text] { width: 100%; }
+:is(.modal, .mghost) { background: #fff; border-radius: 18px; width: min(560px, 100%); max-height: 92vh; overflow: auto; padding: 1.2rem 1.35rem; box-shadow: 0 20px 60px rgba(0,0,0,.25); }
+:is(.modal, .mghost).narrow { width: min(420px, 100%); }
+:is(.modal, .mghost) header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: .8rem; gap: .5rem; font-size: 1.1rem; }
+:is(.modal, .mghost) footer { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1.2rem; flex-wrap: wrap; }
+:is(.modal, .mghost) input[type=text] { width: 100%; }
 .label { font-size: .9rem; font-weight: 700; margin: 1.1rem 0 .45rem; }
 .qgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: .45rem; }
 .qgrid.two { grid-template-columns: 1fr 1fr; margin-top: .45rem; }
@@ -216,9 +216,9 @@ td.hrs.ot { color: var(--bad); background: var(--bad-soft); }
 .chip button { border: 0; background: none; cursor: pointer; color: var(--muted); padding: 0 .2rem; }
 .chk { display: inline-flex; align-items: center; gap: .35rem; padding: .45rem .75rem; border: 1px solid var(--line); border-radius: 99px; cursor: pointer; font-size: .92rem; }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
-.modal label { display: flex; flex-direction: column; gap: .3rem; font-weight: 600; font-size: .9rem; }
-.modal label.chk { flex-direction: row; font-weight: 500; }
-.modal label.full { margin-top: .7rem; }
+:is(.modal, .mghost) label { display: flex; flex-direction: column; gap: .3rem; font-weight: 600; font-size: .9rem; }
+:is(.modal, .mghost) label.chk { flex-direction: row; font-weight: 500; }
+:is(.modal, .mghost) label.full { margin-top: .7rem; }
 .hrsrow { display: flex; align-items: center; gap: .5rem; margin: .6rem 0; flex-wrap: wrap; }
 .hrsrow b { width: 5rem; }
 
@@ -318,7 +318,7 @@ table.list { width: 100%; border-collapse: collapse; }
   .person > .btn.ghost { grid-column: 2; grid-row: 1; justify-self: end; }
   .pinfo { grid-column: 2; grid-row: 2; align-items: flex-end; text-align: right; }
   .poff { grid-column: 1 / -1; }
-  .modal { padding: 1rem; border-radius: 16px; }
+  :is(.modal, .mghost) { padding: 1rem; border-radius: 16px; }
   .overlay { padding: .5rem; align-items: end; }
   .qgrid { grid-template-columns: repeat(3, 1fr); }
   .two-col { grid-template-columns: 1fr; }
@@ -379,8 +379,8 @@ details.problems summary::after { content: ' ▾'; font-weight: 400; }
 details.problems:not([open]) summary::after { content: ' — tap to see ▸'; font-weight: 500; }
 details.problems:not([open]) .ptitle { margin-bottom: 0; }
 .rowbtn { opacity: .55; }
-.modal footer.split { justify-content: space-between; align-items: center; }
-.modal footer.split > span { display: flex; gap: .5rem; margin-left: auto; }
+:is(.modal, .mghost) footer.split { justify-content: space-between; align-items: center; }
+:is(.modal, .mghost) footer.split > span { display: flex; gap: .5rem; margin-left: auto; }
 .linkbtn.danger { color: var(--bad); margin: 0; }
 .qbtn small { display: block; font-size: .72rem; font-weight: 500; color: var(--muted); margin-top: .1rem; }
 .qbtn.on small { color: #d9efe4; }
@@ -401,8 +401,8 @@ details.problems:not([open]) .ptitle { margin-bottom: 0; }
   .tips .btn { margin-left: 0; }
   .hg-row .hg-lbl { display: inline-block; width: 3.6rem; }
   .hrow input[type=time] { width: auto; flex: 1; min-width: 0; }
-  .modal footer.split { flex-direction: column-reverse; align-items: stretch; gap: .8rem; }
-  .modal footer.split > span { justify-content: flex-end; }
+  :is(.modal, .mghost) footer.split { flex-direction: column-reverse; align-items: stretch; gap: .8rem; }
+  :is(.modal, .mghost) footer.split > span { justify-content: flex-end; }
   .list.avail td .hrow input[type=time] { width: 100%; }
   .list.avail tr { display: grid; grid-template-columns: 1fr; }
 }
@@ -427,13 +427,13 @@ input[type=time] { padding: .5rem .6rem; border: 1px solid #d3dad6; border-radiu
 }
 
 /* ---------- image preview ---------- */
-.modal.preview { width: min(980px, 100%); }
+:is(.modal, .mghost).preview { width: min(980px, 100%); }
 .previewbox { background: #e9f0ec; border-radius: 12px; padding: .5rem; max-height: 68vh; overflow: auto; }
 .previewbox img { display: block; width: 100%; height: auto; border-radius: 8px; }
 .previewbtns { justify-content: center !important; }
 .previewbtns .btn { min-width: 8.5rem; }
 @media (max-width: 760px) {
-  .modal.preview { padding: .9rem; }
+  :is(.modal, .mghost).preview { padding: .9rem; }
   .previewbox { max-height: 60vh; padding: .25rem; }
   .previewbtns .btn { flex: 1; min-width: 0; }
 }
@@ -521,7 +521,7 @@ td.cell.flash, .mrow.flash { animation: flash 1.4s var(--ease); }
 
 /* modal open: fade backdrop, rise card (slides up from the bottom on phones) */
 .overlay.enter { animation: fade .2s ease both; }
-.overlay.enter > .modal { animation: modal-in .32s var(--ease) both; }
+.overlay.enter > :is(.modal, .mghost) { animation: modal-in .32s var(--ease) both; }
 @keyframes modal-in { from { opacity: 0; transform: translateY(18px) scale(.97); } to { opacity: 1; transform: none; } }
 .overlay { backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }
 
@@ -572,7 +572,7 @@ details.problems[open] ul { animation: rise .25s var(--ease) both; }
 }
 
 /* ---------- share screen (redesign) ---------- */
-.modal.preview { width: min(900px, 100%); padding: 1.1rem 1.25rem 1rem; }
+:is(.modal, .mghost).preview { width: min(900px, 100%); padding: 1.1rem 1.25rem 1rem; }
 .pv-head { align-items: center !important; margin-bottom: .9rem !important; }
 .pv-head b { font-size: 1.15rem; }
 .pv-modes { display: flex; width: 100%; }
@@ -584,8 +584,8 @@ details.problems[open] ul { animation: rise .25s var(--ease) both; }
 .pv-day.on { border-color: var(--brand-2); background: var(--brand-soft); color: var(--brand); }
 .pv-day.on b { color: var(--brand); }
 .pv-day:active { transform: scale(.95); }
-.modal.preview .previewbox { margin-top: .9rem; background: #f1f4f2; padding: .6rem; border-radius: 14px; }
-.modal.preview .previewbox img { border-radius: 10px; box-shadow: 0 4px 18px rgba(20,50,35,.12); }
+:is(.modal, .mghost).preview .previewbox { margin-top: .9rem; background: #f1f4f2; padding: .6rem; border-radius: 14px; }
+:is(.modal, .mghost).preview .previewbox img { border-radius: 10px; box-shadow: 0 4px 18px rgba(20,50,35,.12); }
 .pv-actions { display: flex !important; align-items: center; justify-content: flex-end !important; gap: .4rem !important; margin-top: 1rem !important; }
 .pv-main { gap: .5rem; padding: .7rem 1.4rem; font-size: 1rem; }
 .pv-main svg, .pv-icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
@@ -593,14 +593,14 @@ details.problems[open] ul { animation: rise .25s var(--ease) both; }
 .pv-icon:hover { background: var(--bg); color: var(--ink); }
 .pv-icon:active { transform: scale(.95); }
 @media (max-width: 760px) {
-  .modal.preview { padding: .9rem .9rem .8rem; }
+  :is(.modal, .mghost).preview { padding: .9rem .9rem .8rem; }
   .pv-modes button { padding: .5rem .3rem; font-size: .88rem; }
-  .modal.preview .previewbox { padding: .35rem; max-height: 52vh; }
+  :is(.modal, .mghost).preview .previewbox { padding: .35rem; max-height: 52vh; }
   .pv-actions { justify-content: space-between !important; }
   .pv-main { flex: 1; justify-content: center; }
 }
-.modal.preview .previewbox { max-height: calc(92vh - 290px); min-height: 160px; }
-@media (max-width: 760px) { .modal.preview .previewbox { max-height: calc(88vh - 330px); } }
+:is(.modal, .mghost).preview .previewbox { max-height: calc(92vh - 290px); min-height: 160px; }
+@media (max-width: 760px) { :is(.modal, .mghost).preview .previewbox { max-height: calc(88vh - 330px); } }
 
 /* ---------- undo toast ---------- */
 .toast.has-undo { display: flex; align-items: center; gap: .9rem; padding-right: .5rem; }
@@ -642,7 +642,7 @@ td.closedcol:hover { box-shadow: inset 0 0 0 2px #9aa5a0; }
 .closedswitch small { display: block; font-weight: 500; color: var(--muted); font-size: .82rem; margin-top: .1rem; }
 
 /* ---------- history ---------- */
-.modal.history { width: min(900px, 100%); }
+:is(.modal, .mghost).history { width: min(900px, 100%); }
 .hist-title { display: flex; align-items: center; gap: .2rem; }
 .histwrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; transition: opacity .2s; }
 .histwrap.loading { opacity: .5; }
@@ -722,12 +722,12 @@ main { padding-left: max(1.25rem, env(safe-area-inset-left)); padding-right: max
 
   /* pop-ups use the full height, with the buttons always visible */
   .overlay { align-items: center; padding: .35rem max(.5rem, env(safe-area-inset-right)) .35rem max(.5rem, env(safe-area-inset-left)); }
-  .modal { max-height: calc(100vh - .7rem); max-height: calc(100dvh - .7rem); padding: .75rem 1rem 0; border-radius: 16px; }
-  .modal header { margin-bottom: .5rem; }
-  .modal footer { position: sticky; bottom: 0; background: #fff; margin: .8rem -1rem 0; padding: .6rem 1rem max(.6rem, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); z-index: 2; }
-  .modal.editor { width: min(820px, 100%); }
-  .modal.preview { width: min(860px, 100%); }
-  .modal.preview .previewbox { max-height: calc(100vh - 230px); max-height: calc(100dvh - 230px); min-height: 120px; }
+  :is(.modal, .mghost) { max-height: calc(100vh - .7rem); max-height: calc(100dvh - .7rem); padding: .75rem 1rem 0; border-radius: 16px; }
+  :is(.modal, .mghost) header { margin-bottom: .5rem; }
+  :is(.modal, .mghost) footer { position: sticky; bottom: 0; background: #fff; margin: .8rem -1rem 0; padding: .6rem 1rem max(.6rem, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); z-index: 2; }
+  :is(.modal, .mghost).editor { width: min(820px, 100%); }
+  :is(.modal, .mghost).preview { width: min(860px, 100%); }
+  :is(.modal, .mghost).preview .previewbox { max-height: calc(100vh - 230px); max-height: calc(100dvh - 230px); min-height: 120px; }
   .pv-actions { margin-top: .6rem !important; }
   .label { margin: .7rem 0 .35rem; }
   .timebox { padding: .6rem; }
@@ -765,8 +765,8 @@ main { padding-left: max(1.25rem, env(safe-area-inset-left)); padding-right: max
   .tips { gap: .25rem .9rem; font-size: .78rem; }
   .tips i { width: 18px; height: 18px; font-size: .7rem; }
   .tips .btn { padding: .25rem .6rem; min-height: 28px; font-size: .8rem; }
-  .modal.preview .previewbox { display: flex; justify-content: center; overflow: hidden; }
-  .modal.preview .previewbox img { width: auto; max-width: 100%; max-height: calc(100vh - 250px); max-height: calc(100dvh - 250px); object-fit: contain; }
+  :is(.modal, .mghost).preview .previewbox { display: flex; justify-content: center; overflow: hidden; }
+  :is(.modal, .mghost).preview .previewbox img { width: auto; max-width: 100%; max-height: calc(100vh - 250px); max-height: calc(100dvh - 250px); object-fit: contain; }
 }
 @media (orientation: landscape) and (max-height: 500px) {
   .rowmenu { display: none; }
@@ -779,3 +779,97 @@ main { padding-left: max(1.25rem, env(safe-area-inset-left)); padding-right: max
 .partjob .seg button { padding: .3rem .7rem; font-size: .82rem; }
 .addparts { display: flex; gap: .3rem 1.2rem; flex-wrap: wrap; margin-top: .3rem; }
 .addparts .linkbtn { margin-top: .2rem; padding: .4rem 0; }
+
+/* =====================================================================
+   Motion v2: sliding tab highlight, smooth page changes, closing dialogs
+   ===================================================================== */
+:root { --spring: cubic-bezier(.22, 1, .36, 1); --glide: cubic-bezier(.34, 1.28, .52, 1); }
+
+/* sliding highlight behind the chosen tab / toggle */
+[data-pill] { position: relative; isolation: isolate; }
+[data-pill] > .pill { position: absolute; left: 0; top: 0; z-index: -1; pointer-events: none; opacity: 0; will-change: transform, width;
+  transition: transform .42s var(--glide), width .42s var(--glide), height .42s var(--glide), opacity .2s ease; }
+nav[data-pill] > .pill { background: #fff; border-radius: 10px; box-shadow: 0 2px 10px rgba(0, 40, 20, .22); }
+nav[data-pill] a.on { background: transparent; }
+nav[data-pill] a { transition: color .3s var(--ease), background .2s var(--ease), transform .15s var(--ease); }
+.seg[data-pill] > .pill { background: #fff; border-radius: 9px; box-shadow: 0 1px 3px rgba(0, 0, 0, .12), 0 2px 8px rgba(0, 0, 0, .05); }
+.seg[data-pill] button.on { background: transparent; box-shadow: none; }
+.seg[data-pill] button { transition: color .3s var(--ease), transform .12s var(--ease); }
+
+/* smooth page changes: the page stays tappable the whole time */
+:root { view-transition-name: none; }
+::view-transition { pointer-events: none; }
+:root[data-vt] main { view-transition-name: page; }
+:root[data-vt^="week"] main .toolbar, :root[data-vt="view"] main .toolbar { view-transition-name: toolbar; }
+:root[data-vt^="week"] .weektitle { view-transition-name: weektitle; }
+:root[data-vt^="day"] main { view-transition-name: none; }
+:root[data-vt^="day"] .mday, :root[data-vt^="day"] section.day { view-transition-name: daycard; }
+:root[data-vt="signin"] .login-card { view-transition-name: logincard; }
+:root[data-vt="signin"] img.logo { view-transition-name: brandlogo; }
+:root[data-vt="signin"] .login-card img.logo { view-transition-name: brandlogo; }
+
+::view-transition-old(weektitle), ::view-transition-new(weektitle) { height: 100%; object-fit: none; object-position: center; }
+::view-transition-group(*) { animation-duration: .4s; animation-timing-function: var(--spring); }
+
+/* the toolbar stays put (its highlight glides on its own) */
+::view-transition-group(toolbar) { animation: none; }
+::view-transition-old(toolbar) { display: none; }
+::view-transition-new(toolbar) { animation: none; }
+
+/* tabs: slide sideways in the direction of the tab */
+:root[data-vt="tab-fwd"] { --vx: 1; }
+:root[data-vt="tab-back"] { --vx: -1; }
+:root[data-vt^="tab"]::view-transition-old(page) { animation: vt-out .15s cubic-bezier(.4, 0, 1, 1) both; --vd: 36px; }
+:root[data-vt^="tab"]::view-transition-new(page) { animation: vt-in .44s var(--spring) .07s both; --vd: 52px; }
+
+/* weeks: a bigger swipe; the week name rolls */
+:root[data-vt="week-next"], :root[data-vt="day-next"] { --vx: 1; }
+:root[data-vt="week-prev"], :root[data-vt="day-prev"] { --vx: -1; }
+:root[data-vt^="week"]::view-transition-old(page) { animation: vt-out .17s cubic-bezier(.4, 0, 1, 1) both; --vd: 70px; }
+:root[data-vt^="week"]::view-transition-new(page) { animation: vt-in .46s var(--spring) .08s both; --vd: 90px; }
+:root[data-vt^="week"]::view-transition-group(weektitle) { animation: none; }
+:root[data-vt^="week"]::view-transition-old(weektitle) { animation: vt-roll-out .2s ease-in both; object-position: center; }
+:root[data-vt^="week"]::view-transition-new(weektitle) { animation: vt-roll-in .4s var(--spring) .04s both; object-position: center; }
+
+/* phone day tabs: the day card swipes */
+:root[data-vt^="day"]::view-transition-old(daycard) { animation: vt-out .18s cubic-bezier(.4, 0, 1, 1) both; --vd: 40px; }
+:root[data-vt^="day"]::view-transition-new(daycard) { animation: vt-in .4s var(--spring) both; --vd: 50px; }
+
+/* Week <-> Hour by hour: a soft cross-zoom */
+:root[data-vt="view"]::view-transition-old(page) { animation: vt-zoom-out .18s ease-in both; }
+:root[data-vt="view"]::view-transition-new(page) { animation: vt-zoom-in .4s var(--spring) .02s both; }
+
+/* signing in: the card melts away, the logo flies into the header */
+:root[data-vt="signin"]::view-transition-old(logincard) { animation: vt-zoom-out .3s ease-in both; }
+:root[data-vt="signin"]::view-transition-group(brandlogo) { animation-duration: .7s; animation-timing-function: cubic-bezier(.76, 0, .24, 1); z-index: 5; }
+:root[data-vt="signin"]::view-transition-new(page) { animation: vt-rise .55s var(--spring) .25s both; }
+:root[data-vt="signin"]::view-transition-old(brandlogo), :root[data-vt="signin"]::view-transition-new(brandlogo) { height: 100%; object-fit: contain; animation-duration: .7s; }
+
+@keyframes vt-out { to { opacity: 0; transform: translateX(calc(var(--vd) * var(--vx) * -1)) scale(.985); } }
+@keyframes vt-in { from { opacity: 0; transform: translateX(calc(var(--vd) * var(--vx))); } }
+@keyframes vt-roll-out { to { opacity: 0; transform: translateY(calc(-10px * var(--vx))); filter: blur(2px); } }
+@keyframes vt-roll-in { from { opacity: 0; transform: translateY(calc(12px * var(--vx))); filter: blur(2px); } }
+@keyframes vt-zoom-out { to { opacity: 0; transform: scale(.975); } }
+@keyframes vt-zoom-in { from { opacity: 0; transform: scale(1.015) translateY(6px); } }
+@keyframes vt-rise { from { opacity: 0; transform: translateY(24px) scale(.985); } }
+
+/* closing a dialog: it sinks and fades, while the page is already usable */
+.overlay.leaving { animation: fade-out .22s ease both; pointer-events: none; }
+.overlay.leaving > .mghost { animation: modal-out .22s cubic-bezier(.4, 0, 1, 1) both; }
+@keyframes fade-out { to { opacity: 0; } }
+@keyframes modal-out { to { opacity: 0; transform: translateY(14px) scale(.97); } }
+
+/* rows ripple in on a new tab */
+main.enter-vt .sched tbody tr, main.enter-vt .mrow, main.enter-vt .person { animation-duration: .36s; }
+/* label colors swap as the sliding highlight passes */
+nav[data-pill] a.was-on { color: var(--brand); transition: none; }
+nav[data-pill] a.on.not-yet { color: #e3f1ea; transition: none; }
+.seg[data-pill] button.was-on { color: var(--ink); transition: none; }
+.seg[data-pill] button.on.not-yet { color: var(--muted); transition: none; }
+/* data arriving on the same page: content eases in, the toolbar stays still */
+main.enter-load > :not(.toolbar) { animation: fade .3s ease both; }
+
+@media (prefers-reduced-motion: reduce) {
+  [data-pill] > .pill { transition: none; }
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
+}

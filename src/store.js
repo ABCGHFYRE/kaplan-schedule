@@ -33,7 +33,6 @@ export const subscribe = (fn) => (listeners.add(fn), () => listeners.delete(fn))
 export const emit = () => listeners.forEach((fn) => fn(state));
 
 let unsubs = [];
-let weekUnsub = null;
 
 function fail(err) {
   console.error(err);
@@ -68,24 +67,37 @@ export function startData() {
 export function stopData() {
   unsubs.forEach((u) => u());
   unsubs = [];
-  if (weekUnsub) weekUnsub();
-  weekUnsub = null;
+  for (const n of near.values()) n.unsub();
+  near.clear();
   state.weekId = null;
 }
 
+// The shown week plus the weeks on either side stay loaded, so the arrows flip instantly.
+const near = new Map(); // weekId -> { unsub, ready, data }
+function keepNear(ids) {
+  for (const [id, n] of near) if (!ids.includes(id)) { n.unsub(); near.delete(id); }
+  for (const id of ids) {
+    if (near.has(id)) continue;
+    const n = { ready: false, data: null };
+    n.unsub = onSnapshot(doc(db, 'weeks', id), (snap) => {
+      n.data = snap.exists() ? normalizeWeek(snap.data()) : null;
+      n.ready = true;
+      if (state.weekId !== id) return;
+      state.week = n.data;
+      state.ready.week = true;
+      emit();
+    }, fail);
+    near.set(id, n);
+  }
+}
 export function watchWeek(weekId) {
-  if (state.weekId === weekId && weekUnsub) return;
-  if (weekUnsub) weekUnsub();
+  if (state.weekId === weekId && near.has(weekId)) return;
   state.weekId = weekId;
-  state.week = null;
-  state.ready.week = false;
-  // No emit here: this is called from inside render(), which already shows "loading".
-  weekUnsub = onSnapshot(doc(db, 'weeks', weekId), (snap) => {
-    if (state.weekId !== weekId) return;
-    state.week = snap.exists() ? normalizeWeek(snap.data()) : null;
-    state.ready.week = true;
-    emit();
-  }, fail);
+  keepNear([weekId, addDays(weekId, -7), addDays(weekId, 7)]);
+  const n = near.get(weekId);
+  // No emit here: this is called from inside render().
+  state.week = n.ready ? n.data : null;
+  state.ready.week = n.ready;
 }
 
 function normalizeWeek(w) {

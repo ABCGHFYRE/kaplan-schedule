@@ -75,6 +75,7 @@ let wasPhone = window.matchMedia('(max-width: 760px) and (min-height: 501px)').m
 window.addEventListener('resize', () => {
   const now = window.matchMedia('(max-width: 760px) and (min-height: 501px)').matches;
   if (now !== wasPhone) { wasPhone = now; render(true); }
+  placePills(false);
 });
 
 // ====================================================================== auth
@@ -111,8 +112,37 @@ function render(force = false) {
   }
   pending = false;
   if (state.user === undefined) return;
+  const authKey = state.user ? 'in' : 'out';
+  const r = state.user ? route() : null;
+  const navKey = r ? `${r.view}|${r.weekId}|${pickedDay ? `${pickedDay.weekId}:${pickedDay.d}` : ''}` : 'login';
+  const kind = lastNavKey && navKey !== lastNavKey ? transitionKind(lastAuth, authKey, lastRoute, r) : '';
+  // Redrawing mid-animation would cut it off; data-only updates wait for it to finish (well under a second).
+  // Something the user just did (force) wins: finish the animation now instead of waiting.
+  if (!kind && vtRunning) {
+    if (!force) { redrawAfterVT = true; return; }
+    currentVT?.skipTransition();
+  }
+  lastAuth = authKey; lastNavKey = navKey; lastRoute = r; lastPickedD = pickedDay?.d ?? -1;
+  if (kind && canAnimatePage()) {
+    // Smooth page change. The page stays tappable while it plays.
+    const token = ++vtToken;
+    document.documentElement.dataset.vt = kind;
+    vtRunning = true;
+    const t = document.startViewTransition(() => paint(kind, true));
+    currentVT = t;
+    t.ready.catch(() => {}); // a newer page change replaced this one: fine
+    t.finished.finally(() => {
+      if (token !== vtToken) return;
+      delete document.documentElement.dataset.vt;
+      vtRunning = false;
+      if (redrawAfterVT) { redrawAfterVT = false; render(); }
+    });
+  } else paint(kind, false);
+}
+function paint(kind = '', vt = false) {
   if (!state.user) {
     renderLogin();
+    afterPaint(true);
     return;
   }
   const r = route();
@@ -120,15 +150,145 @@ function render(force = false) {
   else if (['people', 'employees', 'timeoff'].includes(r.view)) watchWeek(nextMonday());
   const views = { week: viewWeek, coverage: viewCoverage, people: viewPeople, employees: viewPeople, timeoff: viewPeople, settings: viewSettings };
   const fn = views[r.view] || viewWeek;
-  const scroll = window.scrollY;
+  const scroll = /^tab|signin/.test(kind) ? 0 : window.scrollY;
   const body = fn(r);
-  const key = `${r.view}|${r.weekId}|${pickedDay ? `${pickedDay.weekId}:${pickedDay.d}` : ''}|${body.includes('class="spinner"') ? 'L' : 'R'}`;
-  const anim = key !== lastKey ? (navDir > 0 ? 'enter-next' : navDir < 0 ? 'enter-prev' : 'enter') : '';
-  if (key !== lastKey) navDir = 0;
+  const busy = body.includes('class="spinner"');
+  const key = `${lastNavKey}|${busy ? 'L' : 'R'}`;
+  let anim = '';
+  if (key !== lastKey && lastKey.startsWith(`${lastNavKey}|`)) anim = 'enter-load'; // same page, data just arrived
+  else if (key !== lastKey) {
+    // With a smooth page change the slide does the work; rows still ripple in on a new tab.
+    if (vt && /^(tab|view|signin)/.test(kind)) anim = 'enter-vt';
+    else if (vt && /^(week|day)/.test(kind)) anim = '';
+    else anim = navDir > 0 ? 'enter-next' : navDir < 0 ? 'enter-prev' : 'enter';
+    navDir = 0;
+  }
   lastKey = key;
   app.innerHTML = shell(r, body, anim);
   window.scrollTo(0, scroll);
+  placePills(true);
+  afterPaint(!busy);
   if (flashCells.size) setTimeout(() => flashCells.clear(), 1600);
+}
+
+// ---- smooth page changes (View Transitions where the browser has them)
+let lastNavKey = '';
+let lastAuth = '';
+let lastRoute = null;
+let lastPickedD = -1;
+let vtToken = 0;
+let vtRunning = false;
+let currentVT = null;
+let redrawAfterVT = false;
+const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+function canAnimatePage() {
+  return !!document.startViewTransition && !reduceMotion() && !splashUp() && !document.hidden;
+}
+const TAB_OF = { week: 0, coverage: 0, people: 1, employees: 1, timeoff: 1, settings: 2 };
+function transitionKind(fromAuth, toAuth, a, b) {
+  if (fromAuth !== toAuth) return toAuth === 'in' ? 'signin' : 'plain';
+  if (!a || !b) return 'plain';
+  const ta = TAB_OF[a.view] ?? 0;
+  const tb = TAB_OF[b.view] ?? 0;
+  if (ta !== tb) return tb > ta ? 'tab-fwd' : 'tab-back';
+  if (ta === 0 && a.weekId !== b.weekId) return b.weekId > a.weekId ? 'week-next' : 'week-prev';
+  if (a.view !== b.view) return 'view';
+  return (pickedDay?.d ?? -1) >= lastPickedD ? 'day-next' : 'day-prev';
+}
+
+// Sliding highlight behind the selected tab / toggle.
+const pillAt = {};
+function placePills(animate) {
+  document.querySelectorAll('[data-pill]').forEach((host) => {
+    const pill = host.querySelector(':scope > .pill');
+    const on = host.querySelector(':scope > .on');
+    if (!pill) return;
+    if (!on || !on.offsetWidth) { pill.style.opacity = '0'; return; }
+    const to = { x: on.offsetLeft, y: on.offsetTop, w: on.offsetWidth, h: on.offsetHeight };
+    const from = pillAt[host.dataset.pill];
+    const set = (p) => {
+      pill.style.transform = `translate(${p.x}px, ${p.y}px)`;
+      pill.style.width = `${p.w}px`;
+      pill.style.height = `${p.h}px`;
+    };
+    pill.style.opacity = '1';
+    // The header is redrawn often, so place the new pill where the old one was, then glide.
+    const glide = animate && from && (from.x !== to.x || from.w !== to.w) && !reduceMotion();
+    const was = glide ? [...host.children].find((c) => c !== pill && c.offsetLeft === from.x) : null;
+    pill.style.transition = 'none';
+    set(glide ? from : to);
+    // Labels fade between colors as the highlight passes, instead of vanishing.
+    if (was) was.classList.add('was-on');
+    if (glide) on.classList.add('not-yet');
+    void pill.offsetWidth;
+    pill.style.transition = '';
+    was?.classList.remove('was-on');
+    on.classList.remove('not-yet');
+    set(to);
+    pillAt[host.dataset.pill] = to;
+  });
+}
+
+// ---- splash screen hand-off
+const splashEl = () => document.getElementById('splash');
+const splashUp = () => !!splashEl() && !splashEl().classList.contains('out');
+let splashTimer = null;
+function afterPaint(ready) {
+  if (!splashUp()) return;
+  if (!ready) {
+    // Never keep people waiting behind the splash: give up on "ready" after a few seconds.
+    if (!splashTimer) splashTimer = setTimeout(() => hideSplash(), 3500);
+    return;
+  }
+  const wait = Math.max(0, 780 - performance.now());
+  clearTimeout(splashTimer);
+  splashTimer = setTimeout(() => hideSplash(), wait);
+}
+function hideSplash() {
+  const sp = splashEl();
+  if (!sp || sp.classList.contains('out')) return;
+  sp.classList.add('out');
+  const done = () => sp.remove();
+  if (reduceMotion() || !sp.animate) {
+    sp.animate?.([{ opacity: 1 }, { opacity: 0 }], { duration: 200, fill: 'forwards' });
+    setTimeout(done, 220);
+    return;
+  }
+  const logo = sp.querySelector('.sp-logo');
+  logo.getAnimations().forEach((x) => x.finish());
+  const target = [...document.querySelectorAll('.brand img.logo, .login-card img.logo')].find((x) => x.offsetWidth);
+  const from = logo.getBoundingClientRect();
+  const to = target ? target.getBoundingClientRect() : { left: from.left, top: from.top, width: from.width, height: from.height };
+  const cx = to.left + to.width / 2;
+  const cy = to.top + to.height / 2;
+  const R = Math.hypot(Math.max(cx, innerWidth - cx), Math.max(cy, innerHeight - cy)) + 4;
+  const ease = 'cubic-bezier(.76, 0, .24, 1)';
+  const D = 640;
+
+  // The green "pours" back into the logo while the logo flies to its spot.
+  const bg = sp.querySelector('.sp-bg');
+  Object.assign(bg.style, { inset: 'auto', left: `${cx - R}px`, top: `${cy - R}px`, width: `${R * 2}px`, height: `${R * 2}px`, borderRadius: '50%' });
+  const end = Math.max(to.width * 0.4, 6) / R;
+  bg.animate([{ transform: 'scale(1)' }, { transform: `scale(${end})` }], { duration: D, easing: ease, fill: 'forwards' });
+  sp.querySelector('.sp-glow')?.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 220, fill: 'forwards' });
+  sp.querySelector('.sp-text')?.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(10px) scale(.96)' }],
+    { duration: 200, easing: 'ease-in', fill: 'forwards' });
+  const dx = cx - (from.left + from.width / 2);
+  const dy = cy - (from.top + from.height / 2);
+  const k = to.width / from.width;
+  logo.animate([
+    { transform: 'none', borderRadius: '28%' },
+    { transform: `translate(${dx}px, ${dy}px) scale(${k})`, borderRadius: '26%' },
+  ], { duration: D, easing: ease, fill: 'forwards' });
+  // App content rises in as the splash clears.
+  const main = app.querySelector('main') || app.querySelector('.login-card');
+  main?.animate([{ opacity: 0, transform: 'translateY(18px) scale(.985)' }, { opacity: 1, transform: 'none' }],
+    { duration: 520, delay: D * 0.45, easing: 'cubic-bezier(.2, .8, .2, 1)', fill: 'backwards' });
+  sp.style.pointerEvents = 'none';
+  setTimeout(() => {
+    sp.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, fill: 'forwards' });
+    setTimeout(done, 150);
+  }, D - 10);
 }
 let lastKey = '';
 let navDir = 0; // +1 = moving to a later week, -1 = earlier (for the slide direction)
@@ -142,7 +302,7 @@ function shell(r, body, anim = '') {
   return `
   <header class="top">
     <a class="brand" href="#/week/${nextMonday()}"><img class="logo" src="icons/icon.svg" alt=""><span>Kaplan Food</span></a>
-    <nav>
+    <nav data-pill="nav"><span class="pill"></span>
       ${tab(`#/week/${r.weekId}`, 'Schedule', sched)}
       ${tab('#/people', 'People', r.view === 'people' || r.view === 'employees' || r.view === 'timeoff')}
       ${tab('#/settings', 'Settings', r.view === 'settings')}
@@ -196,7 +356,7 @@ function weekNav(r, extra = '') {
       </label>
       <button class="btn icon" data-go="${r.view}/${addDays(r.weekId, 7)}" title="Next week" aria-label="Next week">›</button>
     </div>
-    <div class="seg viewtoggle">
+    <div class="seg viewtoggle" data-pill="view"><span class="pill"></span>
       <button class="${r.view === 'week' ? 'on' : ''}" data-go="week/${r.weekId}">Week</button>
       <button class="${r.view === 'coverage' ? 'on' : ''}" data-go="coverage/${r.weekId}">Hour by hour</button>
     </div>
@@ -925,6 +1085,21 @@ new MutationObserver(() => {
 }).observe(modalRoot, { childList: true });
 
 function closeModal() {
+  const ov = modalRoot.firstElementChild;
+  if (ov && modalRoot.dataset.open && !reduceMotion()) {
+    // Move the old dialog into a see-through layer that fades out; nothing in it can be tapped.
+    ov.querySelectorAll('*').forEach((n) => {
+      [...n.attributes].forEach((a) => { if (a.name.startsWith('data-') || a.name === 'id' || a.name === 'name') n.removeAttribute(a.name); });
+      if (n.classList.contains('modal')) n.classList.replace('modal', 'mghost');
+    });
+    ov.removeAttribute('data-close');
+    ov.classList.remove('enter');
+    ov.classList.add('leaving');
+    ov.setAttribute('inert', '');
+    ov.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(ov);
+    setTimeout(() => ov.remove(), 260);
+  }
   delete modalRoot.dataset.open;
   modalRoot.innerHTML = '';
   modalRoot.onclick = null;
@@ -1574,4 +1749,4 @@ document.addEventListener('keydown', (e) => {
 
 // Initial paint before Firebase answers.
 state.user = undefined;
-app.innerHTML = loading('Starting…');
+if (!splashEl()) app.innerHTML = loading('Starting…');
