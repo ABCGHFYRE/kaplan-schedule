@@ -71,9 +71,9 @@ function route() {
 const go = (hash) => { location.hash = hash; };
 
 window.addEventListener('hashchange', () => render(true));
-let wasPhone = window.matchMedia('(max-width: 760px)').matches;
+let wasPhone = window.matchMedia('(max-width: 760px) and (min-height: 501px)').matches;
 window.addEventListener('resize', () => {
-  const now = window.matchMedia('(max-width: 760px)').matches;
+  const now = window.matchMedia('(max-width: 760px) and (min-height: 501px)').matches;
   if (now !== wasPhone) { wasPhone = now; render(true); }
 });
 
@@ -313,7 +313,8 @@ function currentDay(weekId) {
   for (let d = 0; d < 7; d++) if (addDays(weekId, d) === today) return d;
   return 0;
 }
-const isPhone = () => window.matchMedia('(max-width: 760px)').matches;
+const PHONE_Q = '(max-width: 760px) and (min-height: 501px)';
+const isPhone = () => window.matchMedia(PHONE_Q).matches;
 
 function cellHtml(eid, d, r, { big = false } = {}) {
   const week = state.week;
@@ -407,7 +408,7 @@ function viewWeek(r) {
   if (staff.length || gaps.length) {
     const shown = staff.slice(0, 4);
     const count = staff.length + (gaps.length ? 1 : 0);
-    problems = `<details class="problems" ${isPhone() ? '' : 'open'}>
+    problems = `<details class="problems" ${isPhone() || window.matchMedia('(max-height: 500px)').matches ? '' : 'open'}>
       <summary class="ptitle">⚠ ${count} thing${count === 1 ? '' : 's'} to check</summary>
       <ul>
         ${shown.map((x) => `<li>${esc(x.text)}</li>`).join('')}
