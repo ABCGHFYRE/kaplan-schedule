@@ -58,7 +58,7 @@ export function fmtTime(m, { compact = true } = {}) {
   return `${h}${mm}${suf}`;
 }
 export function fmtBlock(b) {
-  return b.e == null ? `${fmtTime(b.s)} –` : `${fmtTime(b.s)} – ${fmtTime(b.e)}`;
+  return b.e == null ? `From ${fmtTime(b.s)}` : `${fmtTime(b.s)} – ${fmtTime(b.e)}`;
 }
 export function timeOptions(from = 4 * 60, to = 23 * 60, step = 15) {
   const out = [];
@@ -124,10 +124,10 @@ export function cellWarnings({ cell, emp, d, date, timeoff }) {
 
 /** Hours for each day the store/kitchen is open. Week override beats the default. */
 export function dayHours(settings, week, d) {
-  const def = settings?.defaultHours?.[d] || { store: [300, 1230], kitchen: [300, 1230] };
+  const def = settings?.defaultHours?.[d] || { store: [300, 1230] };
   const ov = week?.hours?.[d] || {};
   return {
-    store: ov.store !== undefined ? ov.store : def.store,
+    store: ov.store !== undefined ? ov.store : (def.store === undefined ? [300, 1230] : def.store),
     kitchen: ov.kitchen !== undefined ? ov.kitchen : def.kitchen,
     custom: !!week?.hours?.[d],
   };

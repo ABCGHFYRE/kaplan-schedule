@@ -245,18 +245,46 @@ function cellHtml(eid, d, r, { big = false } = {}) {
   return { inner, warns };
 }
 
+// Which saved week comes before each week (for the "Copy" button). Cleared when weeks change.
+let prevCache = {};
+function tipsHidden() {
+  try { return localStorage.getItem('kfs-tips') === 'hidden'; } catch { return false; }
+}
+
 function viewWeek(r) {
   if (!state.ready.week || !state.ready.employees) return weekNav(r) + loading();
   const week = state.week;
+  if (!sortedEmployees().length) {
+    return `${weekNav(r)}
+    <div class="card welcome">
+      <h2>Welcome! Let's make your first schedule.</h2>
+      <ol>
+        <li><b>Add your team</b> on the People page.</li>
+        <li>Come back here and press <b>Start this week</b>.</li>
+        <li>Tap any box to add a shift. When you're done, press <b>Save image</b> and send it to the group chat.</li>
+      </ol>
+      <a class="btn primary" href="#/people">Add your team</a>
+      <p class="muted small">Have a backup or history file? Load it in <a href="#/settings">Settings</a>.</p>
+    </div>`;
+  }
   if (!week) {
+    if (!(r.weekId in prevCache)) {
+      previousSavedWeek(r.weekId).then((v) => { prevCache[r.weekId] = v || null; render(true); })
+        .catch(() => { prevCache[r.weekId] = null; render(true); });
+      return weekNav(r) + loading();
+    }
+    const prev = prevCache[r.weekId];
     return `${weekNav(r)}
     <div class="empty card">
-      <h2>No schedule for this week yet</h2>
-      <p class="muted">Start from last week's schedule, or begin with a blank one.</p>
-      <div class="row center">
-        <button class="btn primary" data-action="create-copy">Copy last week</button>
-        <button class="btn" data-action="create-blank">Start blank</button>
-      </div>
+      <h2>This week isn't scheduled yet</h2>
+      ${prev
+    ? `<p class="muted">Copy an earlier week and change what's different, or start with an empty week.</p>
+      <div class="row center wrap">
+        <button class="btn primary" data-action="create-copy">Copy the week of ${weekLabel(prev).replace(/, \d{4}$/, '')}</button>
+        <button class="btn" data-action="create-blank">Start empty</button>
+      </div>`
+    : `<p class="muted">Everyone on your team will be listed. Then tap a box to add a shift.</p>
+      <div class="row center"><button class="btn primary" data-action="create-blank">Start this week</button></div>`}
     </div>`;
   }
   const { totals, issues } = weekIssues(week);
@@ -264,7 +292,7 @@ function viewWeek(r) {
   const today = ymd(new Date());
   const tools = `
       <button class="btn primary" data-action="png" title="Download a picture of this week to send to the group chat">Save image</button>
-      <div class="menu"><button class="btn icon" data-action="menu" title="More" aria-label="More">⋯</button>
+      <div class="menu"><button class="btn" data-action="menu">More ▾</button>
         <div class="menu-list">
           <button data-action="print">Print</button>
           <button data-action="replace-copy">Replace with last week's schedule</button>
@@ -279,15 +307,24 @@ function viewWeek(r) {
   let problems = '';
   if (staff.length || gaps.length) {
     const shown = staff.slice(0, 4);
-    problems = `<div class="problems">
-      <div class="ptitle">⚠ ${staff.length + (gaps.length ? 1 : 0)} thing${staff.length + (gaps.length ? 1 : 0) === 1 ? '' : 's'} to check</div>
+    const count = staff.length + (gaps.length ? 1 : 0);
+    problems = `<details class="problems" ${isPhone() ? '' : 'open'}>
+      <summary class="ptitle">⚠ ${count} thing${count === 1 ? '' : 's'} to check</summary>
       <ul>
         ${shown.map((x) => `<li>${esc(x.text)}</li>`).join('')}
         ${staff.length > 4 ? `<li><details><summary>${staff.length - 4} more…</summary><ul>${staff.slice(4).map((x) => `<li>${esc(x.text)}</li>`).join('')}</ul></details></li>` : ''}
-        ${gaps.length ? `<li>Nobody covering some hours on ${gapDays.join(', ')}. <a href="#/coverage/${r.weekId}">See hour by hour</a></li>` : ''}
+        ${gaps.length ? `<li>Some hours have nobody working (${gapDays.join(', ')}). <a href="#/coverage/${r.weekId}">See hour by hour</a></li>` : ''}
       </ul>
-    </div>`;
+    </details>`;
   }
+  const tips = tipsHidden() ? '' : `
+    <div class="tips">
+      <b>How it works</b>
+      <span><i>1</i> Tap a box to set a shift</span>
+      <span><i>2</i> Tap a day to add a note</span>
+      <span><i>3</i> <b>Save image</b> → send to the group chat</span>
+      <button class="btn small" data-action="hide-tips">Got it</button>
+    </div>`;
 
   const notIn = sortedEmployees().filter((e) => !week.rows.includes(e.id));
   const addPerson = `
@@ -315,7 +352,7 @@ function viewWeek(r) {
       </button>`;
     }).join('');
     return `${weekNav(r, tools)}
-    ${problems}
+    ${tips}${problems}
     <div class="daytabs">${tabs}</div>
     <div class="card mday">
       <div class="mdayhead"><b>${DAYS[d]}</b>
@@ -346,18 +383,18 @@ function viewWeek(r) {
     return `<tr>
       <th class="emp">
         <span class="dot" style="background:${esc(e.color || '#888')}"></span><span class="ename">${esc(e.name)}</span>
-        <span class="menu rowmenu"><button class="rowbtn" data-action="menu" title="Move or remove" aria-label="Row options">⋯</button>
+        <span class="menu rowmenu"><button class="rowbtn" data-action="menu" title="Move or remove ${esc(e.name)}" aria-label="Options for ${esc(e.name)}">⋯</button>
           <span class="menu-list">
             <button data-action="row-up" data-i="${i}" ${i === 0 ? 'disabled' : ''}>Move up</button>
             <button data-action="row-down" data-i="${i}" ${i === week.rows.length - 1 ? 'disabled' : ''}>Move down</button>
-            <button data-action="row-remove" data-eid="${eid}" class="danger">Remove from this week</button>
+            <button data-action="row-remove" data-eid="${eid}" class="danger">Take off this week</button>
           </span></span>
       </th>${tds}
       <td class="hrs ${h > ot ? 'ot' : ''}" title="${h > ot ? `Over ${ot} hours` : 'Hours this week'}">${fmtHours(h)}</td>
     </tr>`;
   }).join('');
   return `${weekNav(r, tools)}
-  ${problems}
+  ${tips}${problems}
   <div class="tablewrap card" id="print-area">
     <div class="print-title">Kaplan Food — Week of ${weekLabel(r.weekId)}</div>
     <table class="sched">
@@ -367,7 +404,7 @@ function viewWeek(r) {
   </div>
   <div class="belowgrid">
     ${addPerson}
-    <span class="muted small">Click any box to change a shift. Shifts with no end time don't count toward hours. Hours are not shown on the saved image.</span>
+    <span class="muted small">Use ⋯ next to a name to move someone or take them off this week. Shifts with no end time don't count toward hours. Hours don't show on the saved image.</span>
   </div>`;
 }
 
@@ -437,8 +474,8 @@ function openCellEditor(eid, d) {
         <div class="label">Common shifts <span class="muted">(tap to fill in)</span></div>
         <div class="qgrid">${quick}</div>
         <div class="qgrid two">
-          <button class="qbtn offbtn ${orig.off ? 'on' : ''}" data-off>Day off</button>
-          <button class="qbtn" data-clear>Not scheduled</button>
+          <button class="qbtn offbtn ${orig.off ? 'on' : ''}" data-off>Day off<small>shows “OFF”</small></button>
+          <button class="qbtn" data-clear>Clear<small>leave the box empty</small></button>
         </div>
 
         <div class="label">Works in</div>
@@ -453,9 +490,10 @@ function openCellEditor(eid, d) {
         <div class="label">Same shift on other days <span class="muted">(optional)</span></div>
         <div class="chips">${DAYS_SHORT.map((n, i) => (i === d ? '' : `<label class="chk"><input type="checkbox" data-apply="${i}" ${st.applyTo.has(i) ? 'checked' : ''}>${n}</label>`)).join('')}</div>
 
-        <footer>
-          <button class="btn" data-close>Cancel</button>
-          <button class="btn primary" data-save>Save</button>
+        <footer class="split">
+          <button class="linkbtn danger" data-rmweek>Take ${esc(e.name)} off this week</button>
+          <span><button class="btn" data-close>Cancel</button>
+          <button class="btn primary" data-save>Save</button></span>
         </footer>
       </div>
     </div>`;
@@ -476,6 +514,7 @@ function openCellEditor(eid, d) {
       draw();
     } else if (t.hasAttribute('data-off')) save({ off: true, note: st.note });
     else if (t.hasAttribute('data-clear')) save(st.note ? { note: st.note } : null);
+    else if (t.hasAttribute('data-rmweek')) { close(); removeFromWeek(eid); }
     else if (t.hasAttribute('data-addblock')) {
       const last = st.blocks[st.blocks.length - 1];
       const s = last.e != null ? Math.min(last.e + 120, 1200) : null;
@@ -525,6 +564,20 @@ function openCellEditor(eid, d) {
   // Shifts saved with no end time open with the box already checked.
   st.blocks.forEach((b) => { if (b.s != null && b.e == null) b.noEnd = true; });
   draw();
+}
+
+async function removeFromWeek(eid) {
+  const wid = state.weekId;
+  const week = state.week;
+  const has = Object.keys(week.cells[eid] || {}).length;
+  const msg = has
+    ? `Take ${empLabel(eid)} off this week? Their shifts for this week will be erased. (They stay on your team.)`
+    : `Take ${empLabel(eid)} off this week? (They stay on your team.)`;
+  if (!(await confirmBox(msg, 'Take off', true))) return;
+  await guard(async () => {
+    await setRows(wid, week.rows.filter((x) => x !== eid));
+    if (has) await setCells(wid, [0, 1, 2, 3, 4, 5, 6].map((d) => ({ eid, d, cell: null })));
+  });
 }
 
 function closeModal() {
@@ -616,11 +669,11 @@ function viewCoverage(r) {
     const gaps = c.gaps[role];
     return `<div class="lane">
       <div class="lanehead"><b>${ROLES[role]}</b>
-        ${!open ? '<span class="muted small">Closed</span>' : gaps.length ? `<span class="badge bad">Nobody ${range(gaps)}</span>` : '<span class="badge good">Covered</span>'}</div>
+        ${open === undefined ? `<span class="muted small">Hours not set</span><a class="small" href="#/settings">Set them</a>` : !open ? '<span class="muted small">Closed</span>' : gaps.length ? `<span class="badge bad">Nobody ${range(gaps)}</span>` : '<span class="badge good">Covered</span>'}</div>
       <div class="track"><div class="strip">${strip}</div><div class="bars">${bars || '<span class="muted small none">Nobody scheduled</span>'}</div></div>
     </div>`;
   };
-  const fmtRange = (x) => (x ? `${fmtTime(x[0])} – ${fmtTime(x[1])}` : 'Closed');
+  const fmtRange = (x) => (x === undefined ? 'not set' : x ? `${fmtTime(x[0])} – ${fmtTime(x[1])}` : 'Closed');
   return `${weekNav(r)}
   <div class="daytabs">${tabs}</div>
   <section class="card day">
@@ -635,33 +688,90 @@ function viewCoverage(r) {
   </section>`;
 }
 
-function openHoursEditor(d) {
-  const cur = dayHours(state.settings, state.week, d);
-  const st = { store: cur.store ? [...cur.store] : null, kitchen: cur.kitchen ? [...cur.kitchen] : null };
+// One "open – close [ ] Closed" row. value: [open, close] | null (closed) | undefined (not set).
+function hoursRow(attr, key, value, d, label) {
+  const closed = value === null;
+  return `<div class="hrow">
+    ${label ? `<span class="hg-lbl">${label}</span>` : ''}
+    <input type="time" step="900" data-${attr}="${key}-s" data-d="${d}" value="${Array.isArray(value) ? toHHMM(value[0]) : ''}" ${closed ? 'disabled' : ''} aria-label="${label || key} opens">
+    <span class="muted">to</span>
+    <input type="time" step="900" data-${attr}="${key}-e" data-d="${d}" value="${Array.isArray(value) ? toHHMM(value[1]) : ''}" ${closed ? 'disabled' : ''} aria-label="${label || key} closes">
+    <label class="closedchk"><input type="checkbox" data-${attr}="${key}-closed" data-d="${d}" ${closed ? 'checked' : ''}> Closed</label>
+  </div>`;
+}
+
+/** Applies one change from an hours row. Returns false while only one of the two times is filled in. */
+function applyHoursInput(obj, attrValue, input) {
+  const [key, part] = attrValue.split('-');
+  if (part === 'closed') {
+    if (input.checked) obj[key] = null;
+    else obj[key] = key === 'store' ? [300, 1230] : undefined;
+    return true;
+  }
+  const times = input.closest('.hrow').querySelectorAll('input[type=time]');
+  const s = fromHHMM(times[0].value);
+  const e = fromHHMM(times[1].value);
+  if (s == null && e == null) {
+    if (key === 'kitchen') { obj[key] = undefined; return true; }
+    return false;
+  }
+  if (s == null || e == null) return false;
+  if (e <= s) { toast('Closing time must be after opening time', 'bad'); return false; }
+  obj[key] = [s, e];
+  return true;
+}
+
+function cleanHours(h) {
+  const out = {};
+  if (h.store !== undefined) out.store = h.store;
+  if (h.kitchen !== undefined) out.kitchen = h.kitchen;
+  return out;
+}
+
+function openHoursEditor(d, { usual = false } = {}) {
+  const all = (state.settings.defaultHours || DEFAULT_SETTINGS.defaultHours).map((x) => ({ ...x }));
+  const cur = usual
+    ? { store: all[d]?.store === undefined ? [300, 1230] : all[d].store, kitchen: all[d]?.kitchen, custom: false }
+    : dayHours(state.settings, state.week, d);
+  const st = { store: cur.store, kitchen: cur.kitchen, everyDay: false };
   closeModal();
   const draw = () => {
-    const row = (key, label) => `<div class="hrsrow"><b>${label}</b>
-      <select data-hk="${key}-s"><option value="closed" ${!st[key] ? 'selected' : ''}>Closed</option>${timeOptions(240, 1410).map((m) => `<option value="${m}" ${st[key]?.[0] === m ? 'selected' : ''}>${fmtTime(m)}</option>`).join('')}</select>
-      ${st[key] ? `<span>to</span><select data-hk="${key}-e">${timeOptions(240, 1410).map((m) => `<option value="${m}" ${st[key][1] === m ? 'selected' : ''}>${fmtTime(m)}</option>`).join('')}</select>` : ''}</div>`;
     modalRoot.innerHTML = `
     <div class="overlay" data-x><div class="modal narrow">
-      <header><b>${DAYS[d]} hours (this week only)</b><button class="btn icon ghost" data-x>✕</button></header>
-      ${row('store', 'Store')}${row('kitchen', 'Kitchen')}
-      <p class="muted small">Your usual hours are in Settings.</p>
+      <header><b>${usual ? `Usual hours — ${DAYS[d]}` : `${DAYS[d]} hours (this week only)`}</b><button class="btn icon ghost" data-x>✕</button></header>
+      <div class="label">Store</div>${hoursRow('hk', 'store', st.store, d)}
+      <div class="label">Kitchen</div>${hoursRow('hk', 'kitchen', st.kitchen, d)}
+      <p class="muted small">Leave the kitchen times empty if you don't want warnings about the kitchen.</p>
+      ${usual ? `<label class="chk everyday"><input type="checkbox" data-everyday ${st.everyDay ? 'checked' : ''}> Use these hours for every day</label>` : ''}
       <footer>${cur.custom ? '<button class="btn ghost" data-reset>Use usual hours</button>' : ''}<button class="btn" data-x>Cancel</button><button class="btn primary" data-ok>Save</button></footer>
     </div></div>`;
   };
   modalRoot.onchange = (ev) => {
+    if (ev.target.hasAttribute('data-everyday')) { st.everyDay = ev.target.checked; return; }
     const k = ev.target.dataset.hk;
     if (!k) return;
-    applyHourChange(st, k, ev.target.value);
-    draw();
+    applyHoursInput(st, k, ev.target);
+    if (k.endsWith('-closed')) draw();
   };
   modalRoot.onclick = async (ev) => {
     const t = ev.target;
     if (t.hasAttribute('data-x')) closeModal();
     else if (t.hasAttribute('data-reset')) { closeModal(); await guard(() => setDayHours(state.weekId, d, null)); }
-    else if (t.hasAttribute('data-ok')) { closeModal(); await guard(() => setDayHours(state.weekId, d, st), 'Hours saved'); }
+    else if (t.hasAttribute('data-ok')) {
+      // Use whatever is in the boxes right now, even if the last change event hasn't fired.
+      for (const key of ['store', 'kitchen']) {
+        const first = modalRoot.querySelector(`[data-hk="${key}-s"]`);
+        if (first && !first.disabled) applyHoursInput(st, `${key}-s`, first);
+      }
+      closeModal();
+      if (usual) {
+        const h = cleanHours(st);
+        const next = all.map((x, i) => (st.everyDay || i === d ? h : cleanHours({ store: x.store === undefined ? [300, 1230] : x.store, kitchen: x.kitchen })));
+        await guard(() => saveSettings({ defaultHours: next }), 'Hours saved');
+      } else {
+        await guard(() => setDayHours(state.weekId, d, cleanHours(st)), 'Hours saved');
+      }
+    }
   };
   draw();
 }
@@ -684,23 +794,25 @@ function viewPeople() {
     return `<div class="person">
       <div class="pmain">
         <span class="dot big" style="background:${esc(e.color || '#888')}"></span>
-        <button class="pname" data-action="rename" data-eid="${e.id}" title="Rename">${esc(e.name)}</button>
+        <button class="pname" data-action="rename" data-eid="${e.id}" title="Change name">${esc(e.name)} <span class="pencil" aria-hidden="true">✎</span></button>
         ${h != null ? `<span class="phrs ${h > ot ? 'ot' : ''}" title="Hours scheduled this week">${fmtHours(h)} hrs this week</span>` : ''}
       </div>
       <div class="seg small">
         <button class="${e.role !== 'kitchen' ? 'on' : ''}" data-action="set-role" data-role="cashier" data-eid="${e.id}">Front</button>
         <button class="${e.role === 'kitchen' ? 'on' : ''}" data-action="set-role" data-role="kitchen" data-eid="${e.id}">Kitchen</button>
       </div>
-      <button class="pinfo" data-action="avail" data-eid="${e.id}"><span class="muted small">Can work</span>${esc(availSummary(e))}</button>
+      <button class="pinfo" data-action="avail" data-eid="${e.id}"><span class="muted small">Can work</span><span>${esc(availSummary(e))} <span class="changelink">Change</span></span></button>
       <div class="poff">${mine.map((t) => `<span class="offpill">Off ${offText(t)}${t.note ? ` · ${esc(t.note)}` : ''} <button data-action="del-off" data-id="${t.id}" title="Delete" aria-label="Delete time off">✕</button></span>`).join('')}
         <button class="btn small" data-action="add-off" data-eid="${e.id}">+ Time off</button></div>
-      <button class="btn small ghost" data-action="deactivate" data-eid="${e.id}" title="No longer works here">Remove</button>
+      <button class="btn small ghost" data-action="deactivate" data-eid="${e.id}" title="${esc(e.name)} no longer works here">Remove</button>
     </div>`;
   };
   return `
   <div class="toolbar"><h2>People</h2><div class="actions"><button class="btn primary" data-action="new-emp">+ Add person</button></div></div>
-  <div class="card plist">${active.map(person).join('') || '<p class="muted">No one yet. Add your first employee.</p>'}</div>
-  <p class="muted small">Click a name to rename it. “Remove” keeps the person in old schedules; you can bring them back anytime.</p>
+  ${active.length ? `<div class="card plist">${active.map(person).join('')}</div>
+  <p class="muted small">Tap a name to change it. <b>Front/Kitchen</b> is where they usually work (you can change it on any shift). <b>Remove</b> is for people who no longer work here; they stay in old schedules and you can bring them back.</p>`
+    : `<div class="card empty"><h2>No one on your team yet</h2><p class="muted">Add everyone who works shifts. You can add more later.</p>
+      <button class="btn primary" data-action="new-emp">+ Add your first person</button></div>`}
   ${former.length ? `<details class="card"><summary>Former employees (${former.length})</summary>
     <div class="formers">${former.map((e) => `<span class="former">${esc(e.name)} <button class="btn small ghost" data-action="reactivate" data-eid="${e.id}">Bring back</button></span>`).join('')}</div></details>` : ''}`;
 }
@@ -745,7 +857,7 @@ function openAvailability(eid) {
     modalRoot.innerHTML = `
     <div class="overlay"><div class="modal">
       <header><b>${esc(e.name)} — availability</b><button class="btn icon ghost" data-x>✕</button></header>
-      <p class="muted small">You'll get a warning if you schedule them outside these times.</p>
+      <p class="muted small">If you schedule ${esc(e.name)} outside these times, the schedule will warn you.</p>
       <table class="list avail">${DAYS.map((n, d) => {
     const v = a[d];
     const mode = !v ? 'any' : v.off ? 'off' : 'win';
@@ -753,7 +865,7 @@ function openAvailability(eid) {
           <option value="any" ${mode === 'any' ? 'selected' : ''}>Any time</option>
           <option value="off" ${mode === 'off' ? 'selected' : ''}>Not available</option>
           <option value="win" ${mode === 'win' ? 'selected' : ''}>Only between…</option></select></td>
-          <td>${mode === 'win' ? `${timeSelect(`data-ws="${d}"`, v.s)} – ${timeSelect(`data-we="${d}"`, v.e)}` : ''}</td></tr>`;
+          <td>${mode === 'win' ? `<span class="hrow"><input type="time" step="900" data-ws="${d}" value="${toHHMM(v.s)}" aria-label="${n} from"> <span class="muted">to</span> <input type="time" step="900" data-we="${d}" value="${toHHMM(v.e)}" aria-label="${n} until"></span>` : ''}</td></tr>`;
   }).join('')}</table>
       <footer><button class="btn" data-x>Cancel</button><button class="btn primary" data-ok>Save</button></footer>
     </div></div>`;
@@ -765,8 +877,8 @@ function openAvailability(eid) {
       a[d] = t.value === 'any' ? undefined : t.value === 'off' ? { off: true } : { s: 540, e: 1020 };
       if (!a[d]) delete a[d];
       draw();
-    } else if (t.dataset.ws !== undefined) a[t.dataset.ws].s = +t.value;
-    else if (t.dataset.we !== undefined) a[t.dataset.we].e = +t.value;
+    } else if (t.dataset.ws !== undefined) a[t.dataset.ws].s = fromHHMM(t.value) ?? a[t.dataset.ws].s;
+    else if (t.dataset.we !== undefined) a[t.dataset.we].e = fromHHMM(t.value) ?? a[t.dataset.we].e;
   };
   modalRoot.onclick = async (ev) => {
     if (ev.target.hasAttribute('data-x')) closeModal();
@@ -787,25 +899,29 @@ function viewSettings() {
   return `
   <div class="toolbar"><h2>Settings</h2><div class="actions"><button class="btn" data-action="logout">Sign out</button></div></div>
   <section class="card">
-    <h3>Too many hours</h3>
-    <label class="row">Warn when someone is scheduled over <input type="number" min="1" max="80" step="0.5" value="${s.overtime}" data-set="overtime" class="short"> hours a week</label>
+    <h3>Overtime warning</h3>
+    <label class="row wrap">Warn me when someone is scheduled over <input type="number" min="1" max="80" step="0.5" value="${s.overtime}" data-set="overtime" class="short"> hours a week</label>
   </section>
   <section class="card">
     <h3>Usual open hours</h3>
-    <p class="muted small">The store and kitchen can have different hours. These are used to spot times with nobody working. To change just one day, go to Schedule → Hour by hour.</p>
-    <div class="hoursgrid">
-      <div class="hg-head"><span></span><b>Store</b><b>Kitchen</b></div>
-      ${DAYS.map((n, d) => `<div class="hg-row"><b class="hg-day">${n}</b>
-        <div class="hg-cell"><span class="hg-lbl">Store</span>${timeSelect(`data-dh="store-s" data-d="${d}"`, dh[d]?.store?.[0], { closed: true })}${dh[d]?.store ? `<span>to</span>${timeSelect(`data-dh="store-e" data-d="${d}"`, dh[d].store[1])}` : ''}</div>
-        <div class="hg-cell"><span class="hg-lbl">Kitchen</span>${timeSelect(`data-dh="kitchen-s" data-d="${d}"`, dh[d]?.kitchen?.[0], { closed: true })}${dh[d]?.kitchen ? `<span>to</span>${timeSelect(`data-dh="kitchen-e" data-d="${d}"`, dh[d].kitchen[1])}` : ''}</div>
-      </div>`).join('')}
+    <p class="muted small">Used to warn you about hours when nobody is working. The kitchen can have different hours from the store. To change hours for just one date (like a holiday), use Schedule → Hour by hour.</p>
+    <div class="hourslist">
+      ${DAYS.map((n, d) => {
+    const st = dh[d]?.store === undefined ? [300, 1230] : dh[d].store;
+    const k = dh[d]?.kitchen;
+    const f = (x, none) => (x === undefined ? `<span class="muted">${none}</span>` : x === null ? 'Closed' : `${fmtTime(x[0])} – ${fmtTime(x[1])}`);
+    return `<div class="hl-row"><b class="hl-day">${n}</b>
+          <span><span class="hl-lbl">Store</span> ${f(st, '')}</span>
+          <span><span class="hl-lbl">Kitchen</span> ${f(k, 'not set')}</span>
+          <button class="btn small" data-action="usual-hours" data-d="${d}">Change</button></div>`;
+  }).join('')}
     </div>
   </section>
   <section class="card">
-    <h3>Shift buttons</h3>
-    <p class="muted small">The shifts you can pick with one tap.</p>
+    <h3>Common shifts</h3>
+    <p class="muted small">These show as one-tap buttons when you add a shift. Tap ✕ to remove one.</p>
     <div class="chips">${(s.quickShifts || []).map((q, i) => `<span class="chip">${fmtBlock(q)} <button data-action="qs-del" data-i="${i}" title="Remove">✕</button></span>`).join('')}</div>
-    <div class="row wrap"><label class="tfield"><span>Start</span><input type="time" step="900" id="qs-s" value="09:30"></label> <span class="tarrow">→</span> <label class="tfield"><span>End</span><input type="time" step="900" id="qs-e" value="15:00"></label> <button class="btn" data-action="qs-add">Add button</button></div>
+    <div class="row wrap qsadd"><label class="tfield"><span>Start</span><input type="time" step="900" id="qs-s" value="09:30"></label> <span class="tarrow">→</span> <label class="tfield"><span>End</span><input type="time" step="900" id="qs-e" value="15:00"></label> <button class="btn" data-action="qs-add">+ Add this shift</button></div>
   </section>
   <section class="card">
     <h3>Backup</h3>
@@ -814,7 +930,7 @@ function viewSettings() {
       <label class="btn">Load a backup or history file<input type="file" accept="application/json,.json" id="import-file" hidden></label>
       <span id="import-status" class="muted small">${esc(importStatus)}</span>
     </div>
-    <p class="muted small">Loading a file adds every week in it. Weeks with the same dates get replaced.</p>
+    <p class="muted small">Download a backup now and then to keep a copy. Loading a file adds every week in it; weeks with the same dates get replaced.</p>
   </section>`;
 }
 
@@ -844,6 +960,7 @@ app.addEventListener('click', async (ev) => {
     }
     case 'pick-day': pickedDay = { weekId: wid, d: +el.dataset.d }; render(true); break;
     case 'edit-hours': openHoursEditor(+el.dataset.d); break;
+    case 'usual-hours': openHoursEditor(+el.dataset.d, { usual: true }); break;
     case 'cell': openCellEditor(el.dataset.eid, +el.dataset.d); break;
     case 'note': {
       const d = +el.dataset.d;
@@ -852,6 +969,7 @@ app.addEventListener('click', async (ev) => {
       break;
     }
     case 'create-copy': {
+      prevCache = {};
       const prev = await previousSavedWeek(wid);
       if (!prev) { toast('There is no earlier week to copy. Starting blank.'); }
       await guard(() => createWeek(wid, prev ? { copyFrom: prev } : { rows: sortedEmployees().map((e) => e.id) }),
@@ -859,9 +977,11 @@ app.addEventListener('click', async (ev) => {
       break;
     }
     case 'create-blank':
+      prevCache = {};
       await guard(() => createWeek(wid, { rows: sortedEmployees().map((e) => e.id) }), 'Blank week created');
       break;
     case 'replace-copy': {
+      prevCache = {};
       const prev = await previousSavedWeek(wid);
       if (!prev) { toast('No earlier week to copy.'); break; }
       if (await confirmBox(`Replace this whole week with a copy of the week of ${weekLabel(prev)}? Your changes to this week will be lost.`, 'Replace', true)) {
@@ -870,6 +990,7 @@ app.addEventListener('click', async (ev) => {
       break;
     }
     case 'clear-week':
+      prevCache = {};
       if (await confirmBox(`Delete the whole schedule for ${weekLabel(wid)}? This can't be undone.`, 'Delete week', true)) {
         await guard(() => deleteWeek(wid), 'Week deleted');
       }
@@ -882,17 +1003,11 @@ app.addEventListener('click', async (ev) => {
       await guard(() => setRows(wid, rows));
       break;
     }
-    case 'row-remove': {
-      const eid = el.dataset.eid;
-      const has = Object.keys(week.cells[eid] || {}).length;
-      if (!has || await confirmBox(`Remove ${empLabel(eid)} and their shifts from this week?`, 'Remove', true)) {
-        await guard(async () => {
-          await setRows(wid, week.rows.filter((x) => x !== eid));
-          if (has) await setCells(wid, [0, 1, 2, 3, 4, 5, 6].map((d) => ({ eid, d, cell: null })));
-        });
-      }
+    case 'row-remove': await removeFromWeek(el.dataset.eid); break;
+    case 'hide-tips':
+      try { localStorage.setItem('kfs-tips', 'hidden'); } catch { /* private mode */ }
+      render(true);
       break;
-    }
     case 'print': window.print(); break;
     case 'png': {
       const blob = await renderWeekPng({ weekId: wid, week, employees: state.employees });
@@ -980,21 +1095,6 @@ app.addEventListener('change', async (ev) => {
     if (f === 'active') render(true);
     return;
   }
-  if (t.dataset.hr) {
-    const d = +t.dataset.d;
-    const cur = dayHours(state.settings, state.week, d);
-    const next = { store: cur.store ? [...cur.store] : null, kitchen: cur.kitchen ? [...cur.kitchen] : null };
-    applyHourChange(next, t.dataset.hr, t.value);
-    await guard(() => setDayHours(state.weekId, d, next));
-    return;
-  }
-  if (t.dataset.dh) {
-    const d = +t.dataset.d;
-    const all = (state.settings.defaultHours || DEFAULT_SETTINGS.defaultHours).map((x) => ({ ...x }));
-    applyHourChange(all[d], t.dataset.dh, t.value);
-    await guard(() => saveSettings({ defaultHours: all }));
-    return;
-  }
   if (t.dataset.set === 'overtime') {
     const v = parseFloat(t.value);
     if (v > 0) await guard(() => saveSettings({ overtime: v }), 'Saved');
@@ -1024,14 +1124,6 @@ app.addEventListener('change', async (ev) => {
     }
   }
 });
-
-function applyHourChange(obj, key, value) {
-  const [which, end] = key.split('-');
-  if (value === 'closed') { obj[which] = null; return; }
-  const v = +value;
-  const cur = obj[which] || [which === 'store' ? 300 : 420, which === 'store' ? 1230 : 1200];
-  obj[which] = end === 's' ? [v, Math.max(cur[1], v + 15)] : [Math.min(cur[0], v - 15), v];
-}
 
 app.addEventListener('submit', async (ev) => {
   if (ev.target.id === 'off-form') {

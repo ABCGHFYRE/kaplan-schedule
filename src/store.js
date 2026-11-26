@@ -7,8 +7,9 @@ const { doc, collection, onSnapshot, setDoc, updateDoc, deleteDoc, addDoc, getDo
 
 export const DEFAULT_SETTINGS = {
   overtime: 40,
-  // store and kitchen [open, close] per weekday (Mon..Sun), minutes from midnight; null = closed
-  defaultHours: Array.from({ length: 7 }, () => ({ store: [300, 1230], kitchen: [420, 1200] })),
+  // store and kitchen [open, close] per weekday (Mon..Sun), minutes from midnight.
+  // null = closed; kitchen left out = not set (no kitchen warnings).
+  defaultHours: Array.from({ length: 7 }, () => ({ store: [300, 1230] })),
   quickShifts: [
     { s: 300, e: 780 }, { s: 300, e: 660 }, { s: 480, e: 660 }, { s: 570, e: 900 },
     { s: 570, e: 1140 }, { s: 660, e: 1140 }, { s: 780, e: 1230 }, { s: 900, e: 1140 },
