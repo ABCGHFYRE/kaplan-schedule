@@ -772,3 +772,10 @@ main { padding-left: max(1.25rem, env(safe-area-inset-left)); padding-right: max
   .rowmenu { display: none; }
   .sched th.emp .ename { max-width: 82px; }
 }
+
+/* ---------- shift parts with their own job ---------- */
+.partlabel { flex-wrap: wrap; gap: .4rem; }
+.partjob { display: inline-flex; align-items: center; gap: .6rem; }
+.partjob .seg button { padding: .3rem .7rem; font-size: .82rem; }
+.addparts { display: flex; gap: .3rem 1.2rem; flex-wrap: wrap; margin-top: .3rem; }
+.addparts .linkbtn { margin-top: .2rem; padding: .4rem 0; }

@@ -225,6 +225,29 @@ export async function saveSettings(patch) {
   await setDoc(doc(db, 'settings', 'main'), patch, { merge: true });
 }
 
+// One-time fix of each person's usual job, from the old schedule doc:
+// only Chasity and Kristie ever had kitchen (pizza) shifts; everyone else works Front.
+const KITCHEN_PEOPLE = new Set(['chasity', 'kristie']);
+let jobsFixing = false;
+export async function fixJobsOnce() {
+  if (jobsFixing || state.settings.jobsFixed || !state.ready.employees || !state.ready.settings || !state.employees.size) return;
+  jobsFixing = true;
+  try {
+    const batch = writeBatch(db);
+    for (const e of state.employees.values()) {
+      if (e.active === false) continue;
+      const role = KITCHEN_PEOPLE.has(e.id) ? 'kitchen' : 'cashier';
+      if (e.role !== role) batch.set(doc(db, 'employees', e.id), { role }, { merge: true });
+    }
+    batch.set(doc(db, 'settings', 'main'), { jobsFixed: true }, { merge: true });
+    await batch.commit();
+  } catch (err) {
+    console.warn('job fix skipped', err);
+  } finally {
+    jobsFixing = false;
+  }
+}
+
 // ---------- import / export ----------
 export async function importHistory(data, onProgress = () => {}) {
   if (!data || !data.weeks || !data.employees) throw new Error('This file is not a Kaplan schedule export.');

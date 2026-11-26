@@ -2,7 +2,7 @@ import { auth, login, logout, onAuthStateChanged } from './firebase.js';
 import {
   state, subscribe, startData, stopData, watchWeek, setCell, setCells, setNote, setDayHours, setRows,
   createWeek, deleteWeek, restoreWeek, setClosed, markShared, loadWeeks, previousSavedWeek, addEmployee, updateEmployee, setAvailability, addTimeOff,
-  deleteTimeOff, saveSettings, importHistory, exportAll, DEFAULT_SETTINGS,
+  deleteTimeOff, saveSettings, importHistory, exportAll, DEFAULT_SETTINGS, fixJobsOnce,
 } from './store.js';
 import {
   DAYS, DAYS_SHORT, MONTHS, ROLES, PALETTE, esc, ymd, addDays, mondayOf, weekLabel, dayLabel, prettyDate,
@@ -93,7 +93,7 @@ onAuthStateChanged(auth, (user) => {
 
 // Re-render on data changes, but never while someone is typing in a field.
 let pending = false;
-subscribe(() => render());
+subscribe(() => { render(); fixJobsOnce(); });
 document.addEventListener('focusout', () => {
   setTimeout(() => {
     if (pending && !isEditing()) render(true);
@@ -520,18 +520,20 @@ function openCellEditor(eid, d) {
   const e = emp(eid);
   const orig = week.cells[eid]?.[d] || {};
   const st = {
-    blocks: (orig.blocks || []).map((b) => ({ s: b.s, e: b.e, ...(b.pz ? { pz: true } : {}) })),
-    role: orig.blocks?.[0] ? blockRole(orig.blocks[0], e) : (e.role || 'cashier'),
+    blocks: (orig.blocks || []).map((b) => ({ s: b.s, e: b.e, r: blockRole(b, e), ...(b.pz ? { pz: true } : {}) })),
     note: orig.note || '',
     applyTo: new Set(),
   };
-  if (!st.blocks.length) st.blocks.push({ s: null, e: null });
+  if (!st.blocks.length) st.blocks.push({ s: null, e: null, r: e.role || 'cashier' });
+  const other = (r) => (r === 'kitchen' ? 'cashier' : 'kitchen');
+  const jobName = (r) => (r === 'kitchen' ? 'Kitchen' : 'Front');
   const date = addDays(state.weekId, d);
   const close = closeModal;
   closeModal();
 
   const filled = () => st.blocks.filter((b) => b.s != null);
-  const withRole = (blocks) => blocks.map((b) => (st.role !== (e.role || 'cashier') ? { ...b, role: st.role } : { ...b }));
+  // Save the job on a part only when it differs from the person's usual job.
+  const withRole = (blocks) => blocks.map(({ r, ...b }) => (r && r !== (e.role || 'cashier') ? { ...b, role: r } : b));
 
   const warningsHtml = () => {
     const warns = cellWarnings({ cell: { blocks: filled() }, emp: e, d, date, timeoff: state.timeoff });
@@ -553,7 +555,11 @@ function openCellEditor(eid, d) {
     const quick = (state.settings.quickShifts || []).map((q, i) => `<button class="qbtn ${quickOn(q) ? 'on' : ''}" data-q="${i}">${fmtBlock(q)}</button>`).join('');
     const timeRows = st.blocks.map((b, i) => `
       <div class="timerow">
-        ${st.blocks.length > 1 ? `<div class="partlabel">${i === 0 ? 'First part' : 'Second part'}<button class="linkbtn rmpart" data-rm="${i}">Remove</button></div>` : ''}
+        ${st.blocks.length > 1 ? `<div class="partlabel"><span>Part ${i + 1}${i > 0 && st.blocks[i - 1].e != null && b.s === st.blocks[i - 1].e ? ' <span class="muted">(right after part ' + i + ')</span>' : ''}</span>
+          <span class="partjob">
+            <span class="seg small"><button class="${b.r !== 'kitchen' ? 'on' : ''}" data-role="cashier" data-part="${i}">Front</button><button class="${b.r === 'kitchen' ? 'on' : ''}" data-role="kitchen" data-part="${i}">Kitchen</button></span>
+            <button class="linkbtn rmpart" data-rm="${i}">Remove</button>
+          </span></div>` : ''}
         <label class="tfield"><span>Start</span><input type="time" step="900" data-ts="${i}" value="${toHHMM(b.s)}"></label>
         <span class="tarrow">→</span>
         <label class="tfield ${b.e === null && b.s != null && b.noEnd ? 'disabled' : ''}"><span>End</span><input type="time" step="900" data-te="${i}" value="${toHHMM(b.e)}" ${b.noEnd ? 'disabled' : ''}></label>
@@ -567,7 +573,10 @@ function openCellEditor(eid, d) {
         <div id="ed-warn">${warningsHtml()}</div>
 
         <div class="timebox">${timeRows}
-          ${st.blocks.length < 2 ? '<button class="linkbtn" data-addblock>+ Add a second part (split shift)</button>' : ''}
+          ${st.blocks.length < 3 ? `<div class="addparts">
+            <button class="linkbtn" data-addswitch>⇄ Switch jobs mid-shift</button>
+            <button class="linkbtn" data-addbreak>+ Add a break (split shift)</button>
+          </div>` : ''}
         </div>
 
         <div class="label">Common shifts <span class="muted">(tap to fill in)</span></div>
@@ -577,11 +586,11 @@ function openCellEditor(eid, d) {
           <button class="qbtn" data-clear>Clear<small>leave the box empty</small></button>
         </div>
 
-        <div class="label">Works in</div>
+        ${st.blocks.length === 1 ? `<div class="label">Works in</div>
         <div class="seg">
-          <button class="${st.role === 'cashier' ? 'on' : ''}" data-role="cashier">Front</button>
-          <button class="${st.role === 'kitchen' ? 'on' : ''}" data-role="kitchen">Kitchen</button>
-        </div>
+          <button class="${st.blocks[0].r !== 'kitchen' ? 'on' : ''}" data-role="cashier">Front</button>
+          <button class="${st.blocks[0].r === 'kitchen' ? 'on' : ''}" data-role="kitchen">Kitchen</button>
+        </div>` : ''}
 
         <div class="label">Note <span class="muted">(optional)</span></div>
         <input type="text" data-note value="${esc(st.note)}" placeholder="e.g. training, leaves early">
@@ -624,7 +633,7 @@ function openCellEditor(eid, d) {
     if (t.hasAttribute('data-close') && (t.tagName === 'BUTTON' || ev.target === t)) { close(); return; }
     if (t.dataset.q !== undefined) {
       const q = state.settings.quickShifts[+t.dataset.q];
-      st.blocks = [{ s: q.s, e: q.e }];
+      st.blocks = [{ s: q.s, e: q.e, r: st.blocks[0]?.r || e.role || 'cashier' }];
       draw();
     } else if (t.hasAttribute('data-off')) save({ off: true, note: st.note });
     else if (t.hasAttribute('data-clear')) save(st.note ? { note: st.note } : null);
@@ -642,17 +651,21 @@ function openCellEditor(eid, d) {
       if (!other) { toast('Choose who to copy to', 'bad'); return; }
       copyWeekTo(eid, other);
     }
-    else if (t.hasAttribute('data-addblock')) {
+    else if (t.hasAttribute('data-addswitch') || t.hasAttribute('data-addbreak')) {
       const last = st.blocks[st.blocks.length - 1];
-      const s = last.e != null ? Math.min(last.e + 120, 1200) : null;
-      st.blocks.push({ s, e: s != null ? Math.min(s + 240, 1410) : null });
+      if (last.s == null || last.e == null) { toast('Set the start and end of the first part first', 'bad'); return; }
+      const sw = t.hasAttribute('data-addswitch');
+      // Switching jobs starts right when the last part ends; a break leaves a 2-hour gap.
+      const s = Math.min(last.e + (sw ? 0 : 120), 1380);
+      st.blocks.push({ s, e: Math.min(s + 240, 1425), r: sw ? other(last.r) : last.r });
       draw();
     } else if (t.dataset.rm !== undefined) {
       st.blocks.splice(+t.dataset.rm, 1);
       draw();
     } else if (t.dataset.role) {
-      st.role = t.dataset.role;
-      modalRoot.querySelectorAll('[data-role]').forEach((b) => b.classList.toggle('on', b.dataset.role === st.role));
+      if (t.dataset.part !== undefined) st.blocks[+t.dataset.part].r = t.dataset.role;
+      else st.blocks.forEach((b) => { b.r = t.dataset.role; });
+      draw();
     } else if (t.hasAttribute('data-save')) {
       const parts = filled();
       for (const b of parts) {
@@ -666,7 +679,18 @@ function openCellEditor(eid, d) {
   const onTime = (ev) => {
     const t = ev.target;
     if (t.dataset.ts !== undefined) st.blocks[+t.dataset.ts].s = fromHHMM(t.value);
-    else if (t.dataset.te !== undefined) st.blocks[+t.dataset.te].e = fromHHMM(t.value);
+    else if (t.dataset.te !== undefined) {
+      const i = +t.dataset.te;
+      const old = st.blocks[i].e;
+      st.blocks[i].e = fromHHMM(t.value);
+      // If the next part started right when this one ended (a job switch), move it too.
+      const next = st.blocks[i + 1];
+      if (next && old != null && next.s === old && st.blocks[i].e != null) {
+        next.s = st.blocks[i].e;
+        const input = modalRoot.querySelector(`[data-ts="${i + 1}"]`);
+        if (input) input.value = toHHMM(next.s);
+      }
+    }
     else return false;
     refresh();
     return true;
