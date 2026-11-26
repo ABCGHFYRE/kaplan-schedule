@@ -38,27 +38,32 @@ function cellHeight(c) {
   return n * PILL_H + (n - 1) * PILL_GAP + c.pills.filter((p) => p.kitchen).length * KLABEL + (c.note ? NOTE_H : 0);
 }
 
-export async function renderWeekPng({ weekId, week, employees }) {
+export async function renderWeekPng({ weekId, week, employees, days = [0, 1, 2, 3, 4, 5, 6] }) {
   const scale = 3;
   const outer = 14; // page margin around the card
   const nameW = 168;
-  const dayW = 150;
+  const n = days.length;
+  // Fewer days get wider columns so the picture never gets too narrow for the header.
+  const dayW = Math.max(150, Math.ceil((640 - 168) / n));
   const headerH = 96;
-  const gridW = nameW + dayW * 7;
+  const gridW = nameW + dayW * n;
   const W = outer * 2 + gridW;
 
   const measure = document.createElement('canvas').getContext('2d');
-  const notes = [0, 1, 2, 3, 4, 5, 6].map((d) => (week.notes?.[d] || '').trim());
+  const notes = days.map((d) => (week.notes?.[d] || '').trim());
   measure.font = font(800, 15);
   const noteLines = notes.map((n) => (n ? wrap(measure, n, dayW - 20, 2) : []));
   const maxNoteLines = Math.max(0, ...noteLines.map((l) => l.length));
   const dayHeadH = 70 + (maxNoteLines ? 8 + maxNoteLines * 18 : 0);
 
   // People with nothing on the schedule this week (no shifts, no OFF) are left out of the picture.
-  const shown = week.rows.filter((eid) => Object.values(week.cells?.[eid] || {}).some((c) => c && (c.off || c.blocks?.length || c.note)));
+  const shown = week.rows.filter((eid) => days.some((d) => {
+    const c = week.cells?.[eid]?.[d];
+    return c && (c.off || c.blocks?.length || c.note);
+  }));
   const rows = shown.map((eid) => {
     const emp = employees.get(eid) || { name: eid, role: 'cashier' };
-    const cells = [0, 1, 2, 3, 4, 5, 6].map((d) => {
+    const cells = days.map((d) => {
       const c = week.cells?.[eid]?.[d];
       if (!c) return { kind: 'empty', pills: [], note: '' };
       if (c.off) return { kind: 'off', pills: [], note: c.note || '' };
@@ -121,26 +126,31 @@ export async function renderWeekPng({ weekId, week, employees }) {
   drawSpaced(g, 'KAPLAN FOOD', cx0 + 94, cy0 + 33, 2.2, 'left');
   g.fillStyle = '#ffffff';
   g.font = font(800, 34);
-  g.fillText('Weekly Schedule', cx0 + 92, cy0 + 63);
+  g.fillText(n === 7 ? 'Weekly Schedule' : 'Schedule', cx0 + 92, cy0 + 63);
 
-  const a = parseYmd(weekId);
-  const b = parseYmd(addDays(weekId, 6));
-  const range = a.getMonth() === b.getMonth()
+  const a = parseYmd(addDays(weekId, days[0]));
+  const b = parseYmd(addDays(weekId, days[n - 1]));
+  const contiguous = days.every((d, i) => i === 0 || d === days[i - 1] + 1);
+  let range;
+  if (n === 1) range = `${DAYS_SHORT[days[0]]}, ${MONTHS[a.getMonth()].slice(0, 3)} ${a.getDate()}`;
+  else if (!contiguous) range = days.map((d) => DAYS_SHORT[d]).join(', ');
+  else range = a.getMonth() === b.getMonth()
     ? `${MONTHS[a.getMonth()].slice(0, 3)} ${a.getDate()} – ${b.getDate()}`
     : `${MONTHS[a.getMonth()].slice(0, 3)} ${a.getDate()} – ${MONTHS[b.getMonth()].slice(0, 3)} ${b.getDate()}`;
+  const sub = contiguous || n === 1 ? String(b.getFullYear()) : `${MONTHS[a.getMonth()].slice(0, 3)} ${a.getDate()} – ${MONTHS[b.getMonth()].slice(0, 3)} ${b.getDate()}, ${b.getFullYear()}`;
   g.textAlign = 'right';
   g.fillStyle = '#ffffff';
-  g.font = font(800, 34);
+  g.font = font(800, fitFont(g, range, gridW - 340, 34));
   g.fillText(range, cx0 + gridW - 24, cy0 + 40);
   g.fillStyle = 'rgba(255,255,255,0.8)';
   g.font = font(700, 18);
-  g.fillText(String(b.getFullYear()), cx0 + gridW - 24, cy0 + 70);
+  g.fillText(sub, cx0 + gridW - 24, cy0 + 70);
 
   const top = cy0 + headerH;
   const colX = (d) => cx0 + nameW + d * dayW;
 
   // ---- tint for days with a note (holiday, closing early)
-  for (let d = 0; d < 7; d++) {
+  for (let d = 0; d < n; d++) {
     if (notes[d]) {
       g.fillStyle = C.noteCol;
       g.fillRect(colX(d), top, dayW, dayHeadH + bodyH);
@@ -150,8 +160,8 @@ export async function renderWeekPng({ weekId, week, employees }) {
   // ---- day headers
   g.fillStyle = C.headBg;
   g.fillRect(cx0, top, gridW, dayHeadH);
-  for (let d = 0; d < 7; d++) {
-    const date = parseYmd(addDays(weekId, d));
+  for (let d = 0; d < n; d++) {
+    const date = parseYmd(addDays(weekId, days[d]));
     const mid = colX(d) + dayW / 2;
     if (notes[d]) {
       g.fillStyle = '#fff6df';
@@ -160,7 +170,7 @@ export async function renderWeekPng({ weekId, week, employees }) {
     g.textAlign = 'center';
     g.fillStyle = C.muted;
     g.font = font(800, 15);
-    drawSpaced(g, DAYS_SHORT[d].toUpperCase(), mid, top + 22, 2);
+    drawSpaced(g, DAYS_SHORT[days[d]].toUpperCase(), mid, top + 22, 2);
     g.fillStyle = C.ink;
     g.font = font(800, 25);
     g.fillText(`${MONTHS[date.getMonth()].slice(0, 3)} ${date.getDate()}`, mid, top + 48);
@@ -188,7 +198,7 @@ export async function renderWeekPng({ weekId, week, employees }) {
     if (i % 2) {
       g.fillStyle = C.zebra;
       g.fillRect(cx0, y, nameW, r.h);
-      for (let d = 0; d < 7; d++) if (!notes[d]) g.fillRect(colX(d), y, dayW, r.h);
+      for (let d = 0; d < n; d++) if (!notes[d]) g.fillRect(colX(d), y, dayW, r.h);
     }
     const ay = y + r.h / 2;
     g.fillStyle = r.emp.color || '#7d8a84';
@@ -238,7 +248,7 @@ export async function renderWeekPng({ weekId, week, employees }) {
         cy += PILL_H;
       } else {
         c.pills.forEach((p, k) => {
-          const pw = dayW - 12;
+          const pw = Math.min(dayW - 12, 230);
           roundRect(g, mid - pw / 2, cy, pw, PILL_H, 11);
           g.fillStyle = C.pill;
           g.fill();
@@ -268,7 +278,7 @@ export async function renderWeekPng({ weekId, week, employees }) {
   g.strokeStyle = C.line;
   g.lineWidth = 1;
   g.beginPath();
-  for (let d = 0; d < 7; d++) {
+  for (let d = 0; d < n; d++) {
     const x = Math.round(colX(d)) + 0.5;
     g.moveTo(x, top);
     g.lineTo(x, cy0 + cardH);

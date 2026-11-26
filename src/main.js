@@ -56,10 +56,16 @@ setInterval(checkForUpdate, 5 * 60 * 1000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkForUpdate(); });
 
 // ====================================================================== routing
+const nextMonday = () => addDays(mondayOf(), 7);
+function relWeek(weekId) {
+  const diff = Math.round((parseYmd(weekId) - parseYmd(mondayOf())) / 864e5 / 7);
+  return diff === 0 ? 'This week' : diff === 1 ? 'Next week' : diff === -1 ? 'Last week' : '';
+}
 function route() {
   const parts = location.hash.replace(/^#\/?/, '').split('/');
   const view = parts[0] || 'week';
-  const weekId = /^\d{4}-\d{2}-\d{2}$/.test(parts[1] || '') ? mondayOf(parseYmd(parts[1])) : mondayOf();
+  // Schedules are made before the week starts, so the app opens on next week.
+  const weekId = /^\d{4}-\d{2}-\d{2}$/.test(parts[1] || '') ? mondayOf(parseYmd(parts[1])) : nextMonday();
   return { view, weekId };
 }
 const go = (hash) => { location.hash = hash; };
@@ -111,7 +117,7 @@ function render(force = false) {
   }
   const r = route();
   if (r.view === 'week' || r.view === 'coverage') watchWeek(r.weekId);
-  else if (['people', 'employees', 'timeoff'].includes(r.view)) watchWeek(mondayOf());
+  else if (['people', 'employees', 'timeoff'].includes(r.view)) watchWeek(nextMonday());
   const views = { week: viewWeek, coverage: viewCoverage, people: viewPeople, employees: viewPeople, timeoff: viewPeople, settings: viewSettings };
   const fn = views[r.view] || viewWeek;
   const scroll = window.scrollY;
@@ -169,18 +175,22 @@ function renderLogin(error = '') {
 
 // ====================================================================== shared bits
 function weekNav(r, extra = '') {
-  const isThis = r.weekId === mondayOf();
+  const rel = relWeek(r.weekId);
+  const jump = [
+    r.weekId !== mondayOf() ? `<button class="btn ghost small" data-go="${r.view}/${mondayOf()}">This week</button>` : '',
+    r.weekId !== nextMonday() ? `<button class="btn ghost small" data-go="${r.view}/${nextMonday()}">Next week</button>` : '',
+  ].join('');
   return `
   <div class="toolbar">
     <div class="weeknav">
       <button class="btn icon" data-go="${r.view}/${addDays(r.weekId, -7)}" title="Previous week" aria-label="Previous week">‹</button>
       <label class="weekpick" title="Pick a week">
         <span class="weektitle">${weekLabel(r.weekId)}</span>
-        <span class="weeksub">${isThis ? 'This week' : 'Tap to pick a date'}</span>
+        <span class="weeksub">${rel || 'Tap to pick a date'}</span>
         <input type="date" data-jump="${r.view}" value="${r.weekId}" aria-label="Jump to date">
       </label>
       <button class="btn icon" data-go="${r.view}/${addDays(r.weekId, 7)}" title="Next week" aria-label="Next week">›</button>
-      ${isThis ? '' : `<button class="btn ghost small" data-go="${r.view}/${mondayOf()}">Back to this week</button>`}
+      <span class="weekjump">${jump}</span>
     </div>
     <div class="seg viewtoggle">
       <button class="${r.view === 'week' ? 'on' : ''}" data-go="week/${r.weekId}">Week</button>
@@ -301,7 +311,7 @@ function viewWeek(r) {
       <h2>Welcome! Let's make your first schedule.</h2>
       <ol>
         <li><b>Add your team</b> on the People page.</li>
-        <li>Come back here and press <b>Start this week</b>.</li>
+        <li>Come back here and press <b>Start</b> for the week you're scheduling.</li>
         <li>Tap any box to add a shift. When you're done, press <b>Share image</b> and send it to the group chat.</li>
       </ol>
       <a class="btn primary" href="#/people">Add your team</a>
@@ -315,9 +325,10 @@ function viewWeek(r) {
       return weekNav(r) + loading();
     }
     const prev = prevCache[r.weekId];
+    const rel = relWeek(r.weekId);
     return `${weekNav(r)}
     <div class="empty card">
-      <h2>This week isn't scheduled yet</h2>
+      <h2>${rel ? `${rel} (${weekLabel(r.weekId).replace(/, \d{4}$/, '')})` : `The week of ${weekLabel(r.weekId).replace(/, \d{4}$/, '')}`} isn't scheduled yet</h2>
       ${prev
     ? `<p class="muted">Copy an earlier week and change what's different, or start with an empty week.</p>
       <div class="row center wrap">
@@ -325,7 +336,7 @@ function viewWeek(r) {
         <button class="btn" data-action="create-blank">Start empty</button>
       </div>`
     : `<p class="muted">Everyone on your team will be listed. Then tap a box to add a shift.</p>
-      <div class="row center"><button class="btn primary" data-action="create-blank">Start this week</button></div>`}
+      <div class="row center"><button class="btn primary" data-action="create-blank">Start the week of ${weekLabel(r.weekId).replace(/, \d{4}$/, '')}</button></div>`}
     </div>`;
   }
   const { totals, issues } = weekIssues(week);
@@ -607,52 +618,102 @@ function openCellEditor(eid, d) {
   draw();
 }
 
-function openImagePreview(blob, weekId) {
-  const name = `kaplan-schedule-${weekId}.png`;
-  const file = new File([blob], name, { type: 'image/png' });
-  const url = URL.createObjectURL(blob);
-  let canShare = false;
-  try { canShare = !!navigator.canShare && navigator.canShare({ files: [file] }); } catch { canShare = false; }
-  const canCopy = !!(navigator.clipboard && window.ClipboardItem);
+function daysLabel(weekId, days) {
+  if (days.length === 7) return `Week of ${weekLabel(weekId)}`;
+  const names = days.map((d) => DAYS_SHORT[d]);
+  const contiguous = days.every((d, i) => i === 0 || d === days[i - 1] + 1);
+  if (days.length === 1) return prettyDate(addDays(weekId, days[0])).replace(/, \d{4}$/, '');
+  return contiguous ? `${names[0]} – ${names[names.length - 1]}` : names.join(', ');
+}
+
+async function openImagePreview(weekId) {
+  const today = ymd(new Date());
+  const st = { days: [0, 1, 2, 3, 4, 5, 6], blob: null, url: null, busy: false };
+  const presets = [['Whole week', [0, 1, 2, 3, 4, 5, 6]], ['Mon – Fri', [0, 1, 2, 3, 4]], ['Weekend', [5, 6]]];
+  for (let d = 0; d < 7; d++) {
+    if (addDays(weekId, d) === today) presets.push(['Today', [d]]);
+    if (addDays(weekId, d) === addDays(today, 1)) presets.push(['Tomorrow', [d]]);
+  }
   closeModal();
-  modalRoot.innerHTML = `
-  <div class="overlay" data-x><div class="modal preview">
-    <header><div><b>Schedule image</b><div class="muted small">Week of ${weekLabel(weekId)} · this is what the group chat will see</div></div>
-      <button class="btn icon ghost" data-x aria-label="Close">✕</button></header>
-    <div class="previewbox"><img src="${url}" alt="Schedule for the week of ${weekLabel(weekId)}"></div>
-    <footer class="previewbtns">
-      ${canShare ? '<button class="btn primary" data-share>Share…</button>' : ''}
-      ${canCopy ? `<button class="btn ${canShare ? '' : 'primary'}" data-copy>Copy image</button>` : ''}
-      <button class="btn ${canShare || canCopy ? '' : 'primary'}" data-download>Download</button>
-    </footer>
-  </div></div>`;
-  const done = () => { closeModal(); setTimeout(() => URL.revokeObjectURL(url), 1000); };
+  const build = async () => {
+    st.busy = true;
+    st.blob = await renderWeekPng({ weekId, week: state.week, employees: state.employees, days: st.days });
+    if (st.url) URL.revokeObjectURL(st.url);
+    st.url = URL.createObjectURL(st.blob);
+    st.busy = false;
+  };
+  const fileFor = () => {
+    const part = st.days.length === 7 ? '' : `-${st.days.map((d) => DAYS_SHORT[d].toLowerCase()).join('-')}`;
+    return new File([st.blob], `kaplan-schedule-${weekId}${part}.png`, { type: 'image/png' });
+  };
+  const draw = () => {
+    let canShare = false;
+    try { canShare = !!navigator.canShare && navigator.canShare({ files: [fileFor()] }); } catch { canShare = false; }
+    const canCopy = !!(navigator.clipboard && window.ClipboardItem);
+    const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+    modalRoot.innerHTML = `
+    <div class="overlay" data-x><div class="modal preview">
+      <header><div><b>Share the schedule</b><div class="muted small">${esc(daysLabel(weekId, st.days))} · this is what the group chat will see</div></div>
+        <button class="btn icon ghost" data-x aria-label="Close">✕</button></header>
+      <div class="label">Which days?</div>
+      <div class="chips daypick">
+        ${presets.map(([n, ds], i) => `<button class="chip ${same(st.days, ds) ? 'on' : ''}" data-preset="${i}">${n}</button>`).join('')}
+      </div>
+      <div class="chips daypick">
+        ${DAYS_SHORT.map((n, d) => `<button class="chip day ${st.days.includes(d) ? 'on' : ''}" data-day="${d}" aria-pressed="${st.days.includes(d)}">${n} ${parseYmd(addDays(weekId, d)).getDate()}</button>`).join('')}
+      </div>
+      <div class="previewbox"><img src="${st.url}" alt="Schedule for ${esc(daysLabel(weekId, st.days))}"></div>
+      <footer class="previewbtns">
+        ${canShare ? '<button class="btn primary" data-share>Share…</button>' : ''}
+        ${canCopy ? `<button class="btn ${canShare ? '' : 'primary'}" data-copy>Copy image</button>` : ''}
+        <button class="btn ${canShare || canCopy ? '' : 'primary'}" data-download>Download</button>
+      </footer>
+    </div></div>`;
+  };
+  const redraw = async () => {
+    const box = modalRoot.querySelector('.previewbox');
+    if (box) box.classList.add('loading');
+    await build();
+    draw();
+  };
   modalRoot.onclick = async (ev) => {
     const t = ev.target.closest('button') || ev.target;
-    if (t.hasAttribute('data-x')) { done(); return; }
-    if (t.hasAttribute('data-share')) {
+    if (t.hasAttribute('data-x')) { closeModal(); if (st.url) setTimeout(() => URL.revokeObjectURL(st.url), 1000); return; }
+    if (st.busy) return;
+    if (t.dataset.preset !== undefined) {
+      st.days = [...presets[+t.dataset.preset][1]];
+      await redraw();
+    } else if (t.dataset.day !== undefined) {
+      const d = +t.dataset.day;
+      const next = st.days.includes(d) ? st.days.filter((x) => x !== d) : [...st.days, d].sort((a, b) => a - b);
+      if (!next.length) { toast('Pick at least one day', 'bad'); return; }
+      st.days = next;
+      await redraw();
+    } else if (t.hasAttribute('data-share')) {
       try {
-        await navigator.share({ files: [file], title: `Schedule · week of ${weekLabel(weekId)}` });
+        await navigator.share({ files: [fileFor()], title: `Schedule · ${daysLabel(weekId, st.days)}` });
       } catch (e) {
         if (e.name !== 'AbortError') toast('Sharing didn\'t work here. Try Download instead.', 'bad');
       }
     } else if (t.hasAttribute('data-copy')) {
       try {
-        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': st.blob })]);
         toast('Copied — paste it into the group chat', 'ok');
       } catch {
         toast('Couldn\'t copy here. Try Download instead.', 'bad');
       }
     } else if (t.hasAttribute('data-download')) {
       const link = document.createElement('a');
-      link.href = url;
-      link.download = name;
+      link.href = st.url;
+      link.download = fileFor().name;
       document.body.appendChild(link);
       link.click();
       link.remove();
       toast('Image downloaded', 'ok');
     }
   };
+  await build();
+  draw();
 }
 
 async function removeFromWeek(eid) {
@@ -875,7 +936,7 @@ function viewPeople() {
   const upcoming = state.timeoff.filter((t) => (t.end || t.start) >= today).sort((a, b) => (a.start > b.start ? 1 : -1));
   const shortDate = (s) => prettyDate(s).replace(/, \d{4}$/, '');
   const offText = (t) => `${shortDate(t.start)}${t.end && t.end !== t.start ? ` – ${shortDate(t.end)}` : ''}`;
-  const thisWeek = state.weekId === mondayOf() && state.week ? weekTotals(state.week).byEmp : null;
+  const thisWeek = state.weekId === nextMonday() && state.week ? weekTotals(state.week).byEmp : null;
   const ot = state.settings.overtime || 40;
   const person = (e) => {
     const mine = upcoming.filter((t) => t.eid === e.id);
@@ -884,7 +945,7 @@ function viewPeople() {
       <div class="pmain">
         <span class="dot big" style="background:${esc(e.color || '#888')}"></span>
         <button class="pname" data-action="rename" data-eid="${e.id}" title="Change name">${esc(e.name)} <span class="pencil" aria-hidden="true">✎</span></button>
-        ${h != null ? `<span class="phrs ${h > ot ? 'ot' : ''}" title="Hours scheduled this week">${fmtHours(h)} hrs this week</span>` : ''}
+        ${h != null ? `<span class="phrs ${h > ot ? 'ot' : ''}" title="Hours scheduled for next week (${weekLabel(nextMonday())})">${fmtHours(h)} hrs next week</span>` : ''}
       </div>
       <div class="seg small">
         <button class="${e.role !== 'kitchen' ? 'on' : ''}" data-action="set-role" data-role="cashier" data-eid="${e.id}">Front</button>
@@ -1110,8 +1171,7 @@ app.addEventListener('click', async (ev) => {
     case 'png': {
       el.disabled = true;
       try {
-        const blob = await renderWeekPng({ weekId: wid, week, employees: state.employees });
-        openImagePreview(blob, wid);
+        await openImagePreview(wid);
       } finally {
         el.disabled = false;
       }

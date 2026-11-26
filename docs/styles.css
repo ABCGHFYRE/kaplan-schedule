@@ -298,7 +298,6 @@ table.list { width: 100%; border-collapse: collapse; }
   h2 { font-size: 1.3rem; }
   .toolbar { justify-content: center; gap: .6rem; }
   .weeknav { width: 100%; justify-content: space-between; flex-wrap: nowrap; }
-  .weeknav .btn.small { display: none; }
   .weekpick { min-width: 0; flex: 1; }
   .weektitle { font-size: 1.15rem; }
   .viewtoggle { width: 100%; }
@@ -455,3 +454,15 @@ input[type=time] { padding: .5rem .6rem; border: 1px solid #d3dad6; border-radiu
 }
 
 .banner.update { display: flex; align-items: center; justify-content: center; gap: .8rem; flex-wrap: wrap; background: #e3f0ff; color: #1b3a63; font-weight: 600; }
+
+.daypick { margin-bottom: .5rem; }
+.chip.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+.daypick .chip { cursor: pointer; }
+.previewbox.loading img { opacity: .45; transition: opacity .15s; }
+.weekjump { display: inline-flex; gap: .2rem; }
+@media (max-width: 760px) {
+  .weeknav { flex-wrap: wrap; }
+  .weekjump { width: 100%; justify-content: center; }
+  .weeknav .btn.small { display: inline-flex; }
+  .daypick .chip { padding: .4rem .6rem; font-size: .85rem; }
+}
