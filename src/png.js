@@ -24,10 +24,10 @@ const C = {
 const FONT = '-apple-system, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
 const font = (w, s) => `${w} ${s}px ${FONT}`;
 
-const PILL_H = 36;
-const PILL_GAP = 8;
-const KLABEL = 19; // the "KITCHEN" line under a kitchen shift
-const NOTE_H = 19;
+const PILL_H = 44;
+const PILL_GAP = 7;
+const KLABEL = 20; // the "KITCHEN" line under a kitchen shift
+const NOTE_H = 22;
 
 function shiftText(b) {
   return b.e == null ? `From ${fmtTime(b.s)}` : `${fmtTime(b.s)} – ${fmtTime(b.e)}`;
@@ -40,21 +40,23 @@ function cellHeight(c) {
 
 export async function renderWeekPng({ weekId, week, employees }) {
   const scale = 3;
-  const outer = 32; // page margin around the card
-  const nameW = 200;
-  const dayW = 156;
-  const headerH = 124;
+  const outer = 14; // page margin around the card
+  const nameW = 168;
+  const dayW = 150;
+  const headerH = 96;
   const gridW = nameW + dayW * 7;
   const W = outer * 2 + gridW;
 
   const measure = document.createElement('canvas').getContext('2d');
   const notes = [0, 1, 2, 3, 4, 5, 6].map((d) => (week.notes?.[d] || '').trim());
-  measure.font = font(700, 13);
-  const noteLines = notes.map((n) => (n ? wrap(measure, n, dayW - 26, 2) : []));
+  measure.font = font(800, 15);
+  const noteLines = notes.map((n) => (n ? wrap(measure, n, dayW - 20, 2) : []));
   const maxNoteLines = Math.max(0, ...noteLines.map((l) => l.length));
-  const dayHeadH = 76 + (maxNoteLines ? 8 + maxNoteLines * 16 : 0);
+  const dayHeadH = 70 + (maxNoteLines ? 8 + maxNoteLines * 18 : 0);
 
-  const rows = week.rows.map((eid) => {
+  // People with nothing on the schedule this week (no shifts, no OFF) are left out of the picture.
+  const shown = week.rows.filter((eid) => Object.values(week.cells?.[eid] || {}).some((c) => c && (c.off || c.blocks?.length || c.note)));
+  const rows = shown.map((eid) => {
     const emp = employees.get(eid) || { name: eid, role: 'cashier' };
     const cells = [0, 1, 2, 3, 4, 5, 6].map((d) => {
       const c = week.cells?.[eid]?.[d];
@@ -63,11 +65,11 @@ export async function renderWeekPng({ weekId, week, employees }) {
       const pills = (c.blocks || []).map((b) => ({ text: shiftText(b), kitchen: blockRole(b, emp) === 'kitchen' }));
       return { kind: pills.length ? 'work' : 'empty', pills, note: c.note || '' };
     });
-    return { emp, cells, h: Math.max(72, Math.max(...cells.map(cellHeight)) + 28) };
+    return { emp, cells, h: Math.max(64, Math.max(...cells.map(cellHeight)) + 20) };
   });
   const bodyH = rows.reduce((t, r) => t + r.h, 0) || 72;
   const cardH = headerH + dayHeadH + bodyH;
-  const H = outer + cardH + 64;
+  const H = outer + cardH + 40;
 
   const canvas = document.createElement('canvas');
   canvas.width = W * scale;
@@ -83,8 +85,8 @@ export async function renderWeekPng({ weekId, week, employees }) {
   const cy0 = outer;
   g.save();
   g.shadowColor = 'rgba(20, 50, 35, 0.14)';
-  g.shadowBlur = 30;
-  g.shadowOffsetY = 8;
+  g.shadowBlur = 14;
+  g.shadowOffsetY = 4;
   roundRect(g, cx0, cy0, gridW, cardH, 22);
   g.fillStyle = C.card;
   g.fill();
@@ -105,21 +107,21 @@ export async function renderWeekPng({ weekId, week, employees }) {
   g.beginPath(); g.arc(cx0 + gridW - 120, cy0 + 10, 110, 0, Math.PI * 2); g.fill();
   g.beginPath(); g.arc(cx0 + gridW - 300, cy0 + headerH + 30, 80, 0, Math.PI * 2); g.fill();
 
-  roundRect(g, cx0 + 30, cy0 + 32, 60, 60, 16);
+  roundRect(g, cx0 + 22, cy0 + 20, 56, 56, 15);
   g.fillStyle = '#ffffff';
   g.fill();
   g.fillStyle = C.brand;
-  g.font = font(900, 36);
+  g.font = font(900, 34);
   g.textAlign = 'center';
-  g.fillText('K', cx0 + 60, cy0 + 63);
+  g.fillText('K', cx0 + 50, cy0 + 49);
 
   g.textAlign = 'left';
-  g.fillStyle = 'rgba(255,255,255,0.78)';
-  g.font = font(800, 14);
-  drawSpaced(g, 'KAPLAN FOOD', cx0 + 108, cy0 + 46, 2.2, 'left');
+  g.fillStyle = 'rgba(255,255,255,0.8)';
+  g.font = font(800, 15);
+  drawSpaced(g, 'KAPLAN FOOD', cx0 + 94, cy0 + 33, 2.2, 'left');
   g.fillStyle = '#ffffff';
-  g.font = font(800, 32);
-  g.fillText('Weekly Schedule', cx0 + 106, cy0 + 78);
+  g.font = font(800, 34);
+  g.fillText('Weekly Schedule', cx0 + 92, cy0 + 63);
 
   const a = parseYmd(weekId);
   const b = parseYmd(addDays(weekId, 6));
@@ -128,11 +130,11 @@ export async function renderWeekPng({ weekId, week, employees }) {
     : `${MONTHS[a.getMonth()].slice(0, 3)} ${a.getDate()} – ${MONTHS[b.getMonth()].slice(0, 3)} ${b.getDate()}`;
   g.textAlign = 'right';
   g.fillStyle = '#ffffff';
-  g.font = font(800, 30);
-  g.fillText(range, cx0 + gridW - 32, cy0 + 56);
-  g.fillStyle = 'rgba(255,255,255,0.78)';
-  g.font = font(600, 17);
-  g.fillText(String(b.getFullYear()), cx0 + gridW - 32, cy0 + 88);
+  g.font = font(800, 34);
+  g.fillText(range, cx0 + gridW - 24, cy0 + 40);
+  g.fillStyle = 'rgba(255,255,255,0.8)';
+  g.font = font(700, 18);
+  g.fillText(String(b.getFullYear()), cx0 + gridW - 24, cy0 + 70);
 
   const top = cy0 + headerH;
   const colX = (d) => cx0 + nameW + d * dayW;
@@ -157,17 +159,17 @@ export async function renderWeekPng({ weekId, week, employees }) {
     }
     g.textAlign = 'center';
     g.fillStyle = C.muted;
-    g.font = font(800, 13);
-    drawSpaced(g, DAYS_SHORT[d].toUpperCase(), mid, top + 26, 2);
+    g.font = font(800, 15);
+    drawSpaced(g, DAYS_SHORT[d].toUpperCase(), mid, top + 22, 2);
     g.fillStyle = C.ink;
-    g.font = font(800, 22);
-    g.fillText(`${MONTHS[date.getMonth()].slice(0, 3)} ${date.getDate()}`, mid, top + 52);
+    g.font = font(800, 25);
+    g.fillText(`${MONTHS[date.getMonth()].slice(0, 3)} ${date.getDate()}`, mid, top + 48);
     if (noteLines[d].length) {
-      const lh = 16;
+      const lh = 18;
       const boxH = noteLines[d].length * lh + 8;
-      const by = top + 70;
-      g.font = font(700, 13);
-      const bw = Math.min(dayW - 16, Math.max(...noteLines[d].map((l) => g.measureText(l).width)) + 20);
+      const by = top + 66;
+      g.font = font(800, 15);
+      const bw = Math.min(dayW - 10, Math.max(...noteLines[d].map((l) => g.measureText(l).width)) + 16);
       roundRect(g, mid - bw / 2, by, bw, boxH, 8);
       g.fillStyle = C.noteBg;
       g.fill();
@@ -177,8 +179,8 @@ export async function renderWeekPng({ weekId, week, employees }) {
   }
   g.textAlign = 'left';
   g.fillStyle = C.muted;
-  g.font = font(800, 13);
-  drawSpaced(g, 'TEAM', cx0 + 28, top + 26, 2, 'left');
+  g.font = font(800, 15);
+  drawSpaced(g, 'TEAM', cx0 + 20, top + 22, 2, 'left');
 
   // ---- rows
   let y = top + dayHeadH;
@@ -191,29 +193,41 @@ export async function renderWeekPng({ weekId, week, employees }) {
     const ay = y + r.h / 2;
     g.fillStyle = r.emp.color || '#7d8a84';
     g.beginPath();
-    g.arc(cx0 + 44, ay, 18, 0, Math.PI * 2);
+    g.arc(cx0 + 34, ay, 17, 0, Math.PI * 2);
     g.fill();
     g.fillStyle = '#ffffff';
-    g.font = font(800, 16);
+    g.font = font(800, 15);
     g.textAlign = 'center';
-    g.fillText(initials(r.emp.name), cx0 + 44, ay + 1);
+    g.fillText(initials(r.emp.name), cx0 + 34, ay + 1);
     g.textAlign = 'left';
     g.fillStyle = C.ink;
-    g.font = font(800, 19);
-    g.fillText(clip(g, r.emp.name, nameW - 82), cx0 + 72, ay + 1);
+    const nameMax = nameW - 66;
+    const size = fitFont(g, r.emp.name, nameMax, 23);
+    if (size >= 19 || !r.emp.name.includes(' ')) {
+      g.font = font(800, size);
+      g.fillText(clip(g, r.emp.name, nameMax), cx0 + 59, ay + 1);
+    } else {
+      // Long full names go on two lines: first name, then the rest.
+      const [first, ...rest] = r.emp.name.split(' ');
+      const lines = [first, rest.join(' ')];
+      const two = Math.min(...lines.map((l) => fitFont(g, l, nameMax, 20)));
+      g.font = font(800, two);
+      g.fillText(clip(g, lines[0], nameMax), cx0 + 59, ay - two * 0.6);
+      g.fillText(clip(g, lines[1], nameMax), cx0 + 59, ay + two * 0.65);
+    }
 
     r.cells.forEach((c, d) => {
       const mid = colX(d) + dayW / 2;
       let cy = y + (r.h - cellHeight(c)) / 2;
       g.textAlign = 'center';
       if (c.kind === 'off') {
-        const pw = 64;
-        roundRect(g, mid - pw / 2, cy + 6, pw, PILL_H - 12, 12);
+        const pw = 76;
+        roundRect(g, mid - pw / 2, cy + 7, pw, PILL_H - 14, 14);
         g.strokeStyle = '#d7dedb';
         g.lineWidth = 1.5;
         g.stroke();
-        g.fillStyle = '#9aa5a0';
-        g.font = font(800, 13);
+        g.fillStyle = '#8f9a95';
+        g.font = font(800, 16);
         drawSpaced(g, 'OFF', mid, cy + PILL_H / 2 + 1, 2);
         cy += PILL_H;
       } else if (c.kind === 'empty') {
@@ -224,17 +238,17 @@ export async function renderWeekPng({ weekId, week, employees }) {
         cy += PILL_H;
       } else {
         c.pills.forEach((p, k) => {
-          const pw = dayW - 20;
-          roundRect(g, mid - pw / 2, cy, pw, PILL_H, 10);
+          const pw = dayW - 12;
+          roundRect(g, mid - pw / 2, cy, pw, PILL_H, 11);
           g.fillStyle = C.pill;
           g.fill();
           g.fillStyle = C.pillInk;
-          g.font = font(800, 17);
+          g.font = font(800, fitFont(g, p.text, pw - 10, 22));
           g.fillText(clip(g, p.text, pw - 12), mid, cy + PILL_H / 2 + 1);
           cy += PILL_H;
           if (p.kitchen) {
             g.fillStyle = C.kitchenInk;
-            g.font = font(800, 11.5);
+            g.font = font(800, 13.5);
             drawSpaced(g, 'KITCHEN', mid, cy + KLABEL / 2 + 1, 1.6);
             cy += KLABEL;
           }
@@ -243,8 +257,8 @@ export async function renderWeekPng({ weekId, week, employees }) {
       }
       if (c.note) {
         g.fillStyle = C.muted;
-        g.font = font('italic 600', 13);
-        g.fillText(clip(g, c.note, dayW - 16), mid, cy + NOTE_H / 2 + 1);
+        g.font = font('italic 600', 15);
+        g.fillText(clip(g, c.note, dayW - 10), mid, cy + NOTE_H / 2 + 1);
       }
     });
     y += r.h;
@@ -275,9 +289,18 @@ export async function renderWeekPng({ weekId, week, employees }) {
   g.textAlign = 'center';
   g.fillStyle = '#5d6b64';
   g.font = font(600, 15);
-  g.fillText(`Updated ${DAYS_SHORT[(now.getDay() + 6) % 7]}, ${MONTHS[now.getMonth()].slice(0, 3)} ${now.getDate()}  ·  Questions? Ask a manager.`, W / 2, cy0 + cardH + 34);
+  g.fillText(`Updated ${DAYS_SHORT[(now.getDay() + 6) % 7]}, ${MONTHS[now.getMonth()].slice(0, 3)} ${now.getDate()}`, W / 2, cy0 + cardH + 21);
 
   return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+}
+
+// Largest font size (up to max) at which text fits in the given width.
+function fitFont(g, text, width, max) {
+  for (let size = max; size > 14; size -= 1) {
+    g.font = font(800, size);
+    if (g.measureText(text).width <= width) return size;
+  }
+  return 14;
 }
 
 function initials(name) {
