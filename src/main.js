@@ -535,9 +535,7 @@ async function guard(fn, okMsg) {
 function weekIssues(week) {
   const totals = weekTotals(week);
   const issues = [];
-  const ot = state.settings.overtime || 40;
   for (const eid of week.rows) {
-    if (totals.byEmp[eid] > ot) issues.push({ kind: 'ot', text: `${empLabel(eid)} is scheduled ${fmtHours(totals.byEmp[eid])} hours (over ${ot}).` });
     for (let d = 0; d < 7; d++) {
       if (week.closed?.[d]) continue;
       const cell = week.cells[eid]?.[d];
@@ -638,7 +636,6 @@ function viewWeek(r) {
     </div>`;
   }
   const { totals, issues } = weekIssues(week);
-  const ot = state.settings.overtime || 40;
   const today = ymd(new Date());
   const changed = changesSinceShared(week);
   const sharedInfo = week.shared ? (() => {
@@ -706,7 +703,7 @@ function viewWeek(r) {
       const e = emp(eid);
       const { inner, warns } = cellHtml(eid, d, r, { big: true });
       return `<button class="mrow ${warns.length ? 'warn' : ''} ${flashCells.has(`${eid}:${d}`) ? 'flash' : ''}" data-action="cell" data-eid="${eid}" data-d="${d}">
-        <span class="mname">${avatar(e)}${esc(e.name)}<small class="mhrs ${totals.byEmp[eid] > ot ? 'ot' : ''}">${fmtHours(totals.byEmp[eid])} hrs/wk</small></span>
+        <span class="mname">${avatar(e)}${esc(e.name)}<small class="mhrs">${fmtHours(totals.byEmp[eid])} hrs/wk</small></span>
         <span class="mshift">${inner}</span>
         ${warns.length ? `<span class="mwarn">${esc(warns[0])}</span>` : ''}
       </button>`;
@@ -756,7 +753,7 @@ function viewWeek(r) {
             <button data-action="row-remove" data-eid="${eid}" class="danger">Take off this week</button>
           </span></span>
       </th>${tds}
-      <td class="hrs ${h > ot ? 'ot' : ''}" title="${h > ot ? `Over ${ot} hours` : 'Hours this week'}">${fmtHours(h)}</td>
+      <td class="hrs" title="Hours this week">${fmtHours(h)}</td>
     </tr>`;
   }).join('');
   return `${weekNav(r, tools)}
@@ -1609,7 +1606,6 @@ function viewPeople() {
   const shortDate = (s) => prettyDate(s).replace(/, \d{4}$/, '');
   const offText = (t) => `${shortDate(t.start)}${t.end && t.end !== t.start ? ` – ${shortDate(t.end)}` : ''}`;
   const thisWeek = state.weekId === nextMonday() && state.week ? weekTotals(state.week).byEmp : null;
-  const ot = state.settings.overtime || 40;
   const person = (e) => {
     const mine = upcoming.filter((t) => t.eid === e.id);
     const h = thisWeek?.[e.id];
@@ -1617,7 +1613,7 @@ function viewPeople() {
       <div class="pmain">
         ${avatar(e, 'big')}
         <button class="pname" data-action="rename" data-eid="${e.id}" title="Change name">${esc(e.name)} <span class="pencil" aria-hidden="true">✎</span></button>
-        ${h != null ? `<span class="phrs ${h > ot ? 'ot' : ''}" title="Hours scheduled for next week (${weekLabel(nextMonday())})">${fmtHours(h)} hrs next week</span>` : ''}
+        ${h != null ? `<span class="phrs" title="Hours scheduled for next week (${weekLabel(nextMonday())})">${fmtHours(h)} hrs next week</span>` : ''}
       </div>
       <div class="seg small">
         <button class="${e.role !== 'kitchen' ? 'on' : ''}" data-action="set-role" data-role="cashier" data-eid="${e.id}">Front</button>
@@ -1775,10 +1771,6 @@ function viewSettings() {
   const dh = s.defaultHours || DEFAULT_SETTINGS.defaultHours;
   return `
   <div class="toolbar"><h2>Settings</h2><div class="actions"><button class="btn" data-action="logout">Sign out</button></div></div>
-  <section class="card">
-    <h3>Overtime warning</h3>
-    <label class="row wrap">Warn me when someone is scheduled over <input type="number" min="1" max="80" step="0.5" value="${s.overtime}" data-set="overtime" class="short"> hours a week</label>
-  </section>
   <section class="card">
     <h3>Usual open hours</h3>
     <p class="muted small">Used to warn you about hours when nobody is working. The kitchen can have different hours from the store. To change hours for just one date (like a holiday), use Schedule → Hour by hour.</p>
@@ -2010,11 +2002,6 @@ app.addEventListener('change', async (ev) => {
     if (f === 'name' && !v) { toast('Name can’t be empty', 'bad'); return; }
     await guard(() => updateEmployee(tr.dataset.eid, { [f]: v }));
     if (f === 'active') render(true);
-    return;
-  }
-  if (t.dataset.set === 'overtime') {
-    const v = parseFloat(t.value);
-    if (v > 0) await guard(() => saveSettings({ overtime: v }), 'Saved');
     return;
   }
   if (t.id === 'import-file' && t.files[0]) {
