@@ -585,3 +585,34 @@ details.problems[open] ul { animation: rise .25s var(--ease) both; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---------- share screen (redesign) ---------- */
+.modal.preview { width: min(900px, 100%); padding: 1.1rem 1.25rem 1rem; }
+.pv-head { align-items: center !important; margin-bottom: .9rem !important; }
+.pv-head b { font-size: 1.15rem; }
+.pv-modes { display: flex; width: 100%; }
+.pv-modes button { flex: 1; white-space: nowrap; }
+.pv-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: .35rem; margin-top: .6rem; animation: rise .22s var(--ease) both; }
+.pv-day { display: flex; flex-direction: column; align-items: center; gap: .05rem; padding: .4rem 0; border: 1.5px solid var(--line); background: #fff; border-radius: 12px; cursor: pointer; color: var(--muted); line-height: 1.15; transition: all .18s var(--ease); }
+.pv-day span { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.pv-day b { font-size: 1.05rem; color: var(--ink); }
+.pv-day.on { border-color: var(--brand-2); background: var(--brand-soft); color: var(--brand); }
+.pv-day.on b { color: var(--brand); }
+.pv-day:active { transform: scale(.95); }
+.modal.preview .previewbox { margin-top: .9rem; background: #f1f4f2; padding: .6rem; border-radius: 14px; }
+.modal.preview .previewbox img { border-radius: 10px; box-shadow: 0 4px 18px rgba(20,50,35,.12); }
+.pv-actions { display: flex !important; align-items: center; justify-content: flex-end !important; gap: .4rem !important; margin-top: 1rem !important; }
+.pv-main { gap: .5rem; padding: .7rem 1.4rem; font-size: 1rem; }
+.pv-main svg, .pv-icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.pv-icon { display: inline-flex; align-items: center; gap: .4rem; border: 0; background: none; color: var(--muted); font-weight: 600; padding: .55rem .8rem; border-radius: 10px; cursor: pointer; transition: background .18s var(--ease), color .18s var(--ease); }
+.pv-icon:hover { background: var(--bg); color: var(--ink); }
+.pv-icon:active { transform: scale(.95); }
+@media (max-width: 760px) {
+  .modal.preview { padding: .9rem .9rem .8rem; }
+  .pv-modes button { padding: .5rem .3rem; font-size: .88rem; }
+  .modal.preview .previewbox { padding: .35rem; max-height: 52vh; }
+  .pv-actions { justify-content: space-between !important; }
+  .pv-main { flex: 1; justify-content: center; }
+}
+.modal.preview .previewbox { max-height: calc(92vh - 290px); min-height: 160px; }
+@media (max-width: 760px) { .modal.preview .previewbox { max-height: calc(88vh - 330px); } }

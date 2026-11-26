@@ -644,14 +644,16 @@ function daysLabel(weekId, days) {
   return contiguous ? `${names[0]} – ${names[names.length - 1]}` : names.join(', ');
 }
 
+const ICONS = {
+  share: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7.5 7.5 12 3l4.5 4.5M5 12v6.5A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V12"/></svg>',
+  copy: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="12" height="12" rx="2.5"/><path d="M15.5 8.5V6A2.5 2.5 0 0 0 13 3.5H6A2.5 2.5 0 0 0 3.5 6v7A2.5 2.5 0 0 0 6 15.5h2.5"/></svg>',
+  download: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5v11.5M7.5 10.5 12 15l4.5-4.5M4.5 17.5v1A2.5 2.5 0 0 0 7 21h10a2.5 2.5 0 0 0 2.5-2.5v-1"/></svg>',
+};
+
 async function openImagePreview(weekId) {
-  const today = ymd(new Date());
-  const st = { days: [0, 1, 2, 3, 4, 5, 6], blob: null, url: null, busy: false };
-  const presets = [['Whole week', [0, 1, 2, 3, 4, 5, 6]], ['Mon – Fri', [0, 1, 2, 3, 4]], ['Weekend', [5, 6]]];
-  for (let d = 0; d < 7; d++) {
-    if (addDays(weekId, d) === today) presets.push(['Today', [d]]);
-    if (addDays(weekId, d) === addDays(today, 1)) presets.push(['Tomorrow', [d]]);
-  }
+  const ALL = [0, 1, 2, 3, 4, 5, 6];
+  const modes = { week: ALL, weekdays: [0, 1, 2, 3, 4], weekend: [5, 6] };
+  const st = { mode: 'week', days: ALL, blob: null, url: null, busy: false };
   closeModal();
   const build = async () => {
     st.busy = true;
@@ -664,27 +666,33 @@ async function openImagePreview(weekId) {
     const part = st.days.length === 7 ? '' : `-${st.days.map((d) => DAYS_SHORT[d].toLowerCase()).join('-')}`;
     return new File([st.blob], `kaplan-schedule-${weekId}${part}.png`, { type: 'image/png' });
   };
+  let canShare = false;
+  const canCopy = !!(navigator.clipboard && window.ClipboardItem);
   const draw = () => {
-    let canShare = false;
     try { canShare = !!navigator.canShare && navigator.canShare({ files: [fileFor()] }); } catch { canShare = false; }
-    const canCopy = !!(navigator.clipboard && window.ClipboardItem);
-    const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+    // One main action: Share on phones, Copy on computers (or Download if neither works).
+    const main = canShare ? 'share' : canCopy ? 'copy' : 'download';
+    const labels = { share: 'Share', copy: 'Copy image', download: 'Download' };
+    const others = ['share', 'copy', 'download'].filter((k) => k !== main && (k !== 'share' || canShare) && (k !== 'copy' || canCopy));
     modalRoot.innerHTML = `
     <div class="overlay" data-x><div class="modal preview">
-      <header><div><b>Share the schedule</b><div class="muted small">${esc(daysLabel(weekId, st.days))} · this is what the group chat will see</div></div>
-        <button class="btn icon ghost" data-x aria-label="Close">✕</button></header>
-      <div class="label">Which days?</div>
-      <div class="chips daypick">
-        ${presets.map(([n, ds], i) => `<button class="chip ${same(st.days, ds) ? 'on' : ''}" data-preset="${i}">${n}</button>`).join('')}
+      <header class="pv-head">
+        <div><b>Share schedule</b><div class="muted small">${esc(daysLabel(weekId, st.days))}</div></div>
+        <button class="btn icon ghost" data-x aria-label="Close">✕</button>
+      </header>
+      <div class="seg pv-modes" role="group" aria-label="Which days">
+        <button class="${st.mode === 'week' ? 'on' : ''}" data-mode="week">Week</button>
+        <button class="${st.mode === 'weekdays' ? 'on' : ''}" data-mode="weekdays">Weekdays</button>
+        <button class="${st.mode === 'weekend' ? 'on' : ''}" data-mode="weekend">Weekend</button>
+        <button class="${st.mode === 'pick' ? 'on' : ''}" data-mode="pick">Pick days</button>
       </div>
-      <div class="chips daypick">
-        ${DAYS_SHORT.map((n, d) => `<button class="chip day ${st.days.includes(d) ? 'on' : ''}" data-day="${d}" aria-pressed="${st.days.includes(d)}">${n} ${parseYmd(addDays(weekId, d)).getDate()}</button>`).join('')}
-      </div>
+      ${st.mode === 'pick' ? `<div class="pv-days">${DAYS_SHORT.map((n, d) => `
+        <button class="pv-day ${st.days.includes(d) ? 'on' : ''}" data-day="${d}" aria-pressed="${st.days.includes(d)}">
+          <span>${n}</span><b>${parseYmd(addDays(weekId, d)).getDate()}</b></button>`).join('')}</div>` : ''}
       <div class="previewbox"><img src="${st.url}" alt="Schedule for ${esc(daysLabel(weekId, st.days))}"></div>
-      <footer class="previewbtns">
-        ${canShare ? '<button class="btn primary" data-share>Share…</button>' : ''}
-        ${canCopy ? `<button class="btn ${canShare ? '' : 'primary'}" data-copy>Copy image</button>` : ''}
-        <button class="btn ${canShare || canCopy ? '' : 'primary'}" data-download>Download</button>
+      <footer class="pv-actions">
+        ${others.map((k) => `<button class="pv-icon" data-${k} title="${labels[k]}" aria-label="${labels[k]}">${ICONS[k]}<span>${k === 'copy' ? 'Copy' : labels[k]}</span></button>`).join('')}
+        <button class="btn primary pv-main" data-${main}>${ICONS[main]}${labels[main]}</button>
       </footer>
     </div></div>`;
   };
@@ -698,9 +706,9 @@ async function openImagePreview(weekId) {
     const t = ev.target.closest('button') || ev.target;
     if (t.hasAttribute('data-x')) { closeModal(); if (st.url) setTimeout(() => URL.revokeObjectURL(st.url), 1000); return; }
     if (st.busy) return;
-    if (t.dataset.preset !== undefined) {
-      st.days = [...presets[+t.dataset.preset][1]];
-      await redraw();
+    if (t.dataset.mode) {
+      st.mode = t.dataset.mode;
+      if (st.mode !== 'pick') { st.days = modes[st.mode]; await redraw(); } else draw();
     } else if (t.dataset.day !== undefined) {
       const d = +t.dataset.day;
       const next = st.days.includes(d) ? st.days.filter((x) => x !== d) : [...st.days, d].sort((a, b) => a - b);
