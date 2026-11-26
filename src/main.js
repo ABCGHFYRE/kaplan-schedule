@@ -5,7 +5,7 @@ import {
   deleteTimeOff, saveSettings, importHistory, exportAll, DEFAULT_SETTINGS,
 } from './store.js';
 import {
-  DAYS, DAYS_SHORT, ROLES, PALETTE, esc, ymd, addDays, mondayOf, weekLabel, dayLabel, prettyDate,
+  DAYS, DAYS_SHORT, MONTHS, ROLES, PALETTE, esc, ymd, addDays, mondayOf, weekLabel, dayLabel, prettyDate,
   fmtTime, fmtBlock, timeOptions, cellHours, fmtHours, blockRole, cellWarnings, coverage, weekTotals,
   dayHours, parseYmd,
 } from './util.js';
@@ -14,6 +14,46 @@ import { renderWeekPng } from './png.js';
 const app = document.getElementById('app');
 const modalRoot = document.getElementById('modal');
 const toastRoot = document.getElementById('toast');
+
+// ====================================================================== app updates
+// The build stamps index.html with ?v=<version> on app.js. Comparing that stamp with the live
+// index.html tells us when a newer version has been published.
+const APP_VERSION = (() => {
+  try { return new URL(document.querySelector('script[src*="app.js"]').src).searchParams.get('v') || 'dev'; } catch { return 'dev'; }
+})();
+let updateReady = false;
+function versionLabel(v) {
+  const t = parseInt(v, 36);
+  if (!t || Number.isNaN(t) || t < 1.6e12) return v;
+  const d = new Date(t);
+  return `${MONTHS[d.getMonth()].slice(0, 3)} ${d.getDate()}, ${d.getFullYear()} at ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+}
+async function latestVersion() {
+  const res = await fetch(`./index.html?check=${Date.now()}`, { cache: 'no-store' });
+  const m = (await res.text()).match(/app\.js\?v=([a-z0-9]+)/);
+  return m ? m[1] : null;
+}
+async function checkForUpdate() {
+  try {
+    const v = await latestVersion();
+    const ready = !!v && v !== APP_VERSION && APP_VERSION !== 'dev';
+    if (ready !== updateReady) { updateReady = ready; render(); }
+    return v;
+  } catch { return null; }
+}
+function refreshApp() {
+  // A new address skips the browser's saved copy of the page, so the newest version loads.
+  const u = new URL(location.href);
+  u.searchParams.set('r', Date.now().toString(36));
+  location.replace(u.toString());
+}
+(() => {
+  const u = new URL(location.href);
+  if (u.searchParams.has('r')) { u.searchParams.delete('r'); history.replaceState(null, '', u.toString()); }
+})();
+setTimeout(checkForUpdate, 4000);
+setInterval(checkForUpdate, 5 * 60 * 1000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkForUpdate(); });
 
 // ====================================================================== routing
 function route() {
@@ -81,7 +121,8 @@ function render(force = false) {
 
 function shell(r, body) {
   const tab = (href, label, on) => `<a href="${href}" class="${on ? 'on' : ''}">${label}</a>`;
-  const err = state.error ? `<div class="banner error">${esc(state.error)}</div>` : '';
+  const err = (state.error ? `<div class="banner error">${esc(state.error)}</div>` : '')
+    + (updateReady ? '<div class="banner update"><span>A new version of the app is ready.</span><button class="btn small" data-action="refresh-app">Refresh now</button></div>' : '');
   const sched = r.view === 'week' || r.view === 'coverage';
   return `
   <header class="top">
@@ -972,6 +1013,15 @@ function viewSettings() {
     <div class="row wrap qsadd"><label class="tfield"><span>Start</span><input type="time" step="900" id="qs-s" value="09:30"></label> <span class="tarrow">→</span> <label class="tfield"><span>End</span><input type="time" step="900" id="qs-e" value="15:00"></label> <button class="btn" data-action="qs-add">+ Add this shift</button></div>
   </section>
   <section class="card">
+    <h3>App updates</h3>
+    <div class="row wrap">
+      <button class="btn primary" data-action="refresh-app">Refresh app</button>
+      <button class="btn" data-action="check-update">Check for updates</button>
+      <span id="update-status" class="muted small">${updateReady ? 'A new version is ready. Press Refresh app.' : ''}</span>
+    </div>
+    <p class="muted small">Version from ${esc(versionLabel(APP_VERSION))}. Refresh after changes are published to load the newest version right away. You'll stay signed in.</p>
+  </section>
+  <section class="card">
     <h3>Backup</h3>
     <div class="row wrap">
       <button class="btn" data-action="export">Download backup</button>
@@ -1113,6 +1163,16 @@ app.addEventListener('click', async (ev) => {
       break;
     }
     case 'logout': await logout(); break;
+    case 'refresh-app': refreshApp(); break;
+    case 'check-update': {
+      const status = document.getElementById('update-status');
+      if (status) status.textContent = 'Checking…';
+      const v = await checkForUpdate();
+      const msg = v == null ? "Couldn't check right now." : updateReady ? 'A new version is ready. Press Refresh app.' : "You're on the newest version.";
+      const el2 = document.getElementById('update-status');
+      if (el2) el2.textContent = msg;
+      break;
+    }
     default: break;
   }
 });

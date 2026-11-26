@@ -453,3 +453,5 @@ input[type=time] { padding: .5rem .6rem; border: 1px solid #d3dad6; border-radiu
   .previewbox { max-height: 60vh; padding: .25rem; }
   .previewbtns .btn { flex: 1; min-width: 0; }
 }
+
+.banner.update { display: flex; align-items: center; justify-content: center; gap: .8rem; flex-wrap: wrap; background: #e3f0ff; color: #1b3a63; font-weight: 600; }
