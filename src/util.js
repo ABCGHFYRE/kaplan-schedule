@@ -147,11 +147,11 @@ export function coverage({ week, employees, settings, d, step = 15 }) {
     const cell = week.cells?.[eid]?.[d];
     if (!cell || cell.off) continue;
     const emp = employees.get(eid) || { id: eid, name: eid, role: 'cashier' };
-    for (const b of cell.blocks || []) {
+    (cell.blocks || []).forEach((b, bi) => {
       const role = blockRole(b, emp);
       const e = b.e ?? Math.max(store[1], b.s + 60);
-      people.push({ eid, name: emp.name, color: emp.color, role, s: b.s, e, open: b.e == null });
-    }
+      people.push({ eid, bi, name: emp.name, color: emp.color, role, s: b.s, e, open: b.e == null });
+    });
   }
   const lo = Math.min(store[0], hrs.kitchen ? hrs.kitchen[0] : 1e9, ...people.map((p) => p.s));
   const hi = Math.max(store[1], hrs.kitchen ? hrs.kitchen[1] : 0, ...people.map((p) => p.e));

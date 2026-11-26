@@ -76,6 +76,7 @@ window.addEventListener('resize', () => {
   const now = window.matchMedia('(max-width: 760px) and (min-height: 501px)').matches;
   if (now !== wasPhone) { wasPhone = now; render(true); }
   placePills(false);
+  fitTopBar();
 });
 
 // ====================================================================== auth
@@ -102,6 +103,7 @@ document.addEventListener('focusout', () => {
 });
 function isEditing() {
   const a = document.activeElement;
+  if (drag?.active) return true; // don't redraw under someone's finger
   return a && app.contains(a) && ['INPUT', 'TEXTAREA', 'SELECT'].includes(a.tagName) && a.type !== 'button';
 }
 
@@ -142,6 +144,7 @@ function render(force = false) {
 function paint(kind = '', vt = false) {
   if (!state.user) {
     renderLogin();
+    fitTopBar();
     afterPaint(true);
     return;
   }
@@ -164,9 +167,13 @@ function paint(kind = '', vt = false) {
     navDir = 0;
   }
   lastKey = key;
+  const before = paintedNav === lastNavKey && !reduceMotion() ? barRects() : null;
+  paintedNav = lastNavKey;
   app.innerHTML = shell(r, body, anim);
   window.scrollTo(0, scroll);
+  if (before) glideBars(before);
   placePills(true);
+  fitTopBar();
   afterPaint(!busy);
   if (flashCells.size) setTimeout(() => flashCells.clear(), 1600);
 }
@@ -291,6 +298,29 @@ function hideSplash() {
   }, D - 10);
 }
 let lastKey = '';
+let paintedNav = '';
+// Bars in the hour-by-hour view glide from where they were to where they are now.
+const barKey = (b) => `${b.dataset.eid}|${b.dataset.d}|${b.dataset.s}`;
+function barRects() {
+  const m = new Map();
+  app.querySelectorAll('.brow .bar').forEach((b) => m.set(barKey(b), b.getBoundingClientRect()));
+  return m;
+}
+function glideBars(before) {
+  if (!before.size) return;
+  app.querySelectorAll('.brow .bar').forEach((b) => {
+    const o = before.get(barKey(b));
+    if (!o) return;
+    const n = b.getBoundingClientRect();
+    const dx = o.left - n.left;
+    const dy = o.top - n.top;
+    if (Math.abs(dx) + Math.abs(dy) + Math.abs(o.width - n.width) < 1) return;
+    b.animate([
+      { transform: `translate(${dx}px, ${dy}px)`, width: `${o.width}px` },
+      { transform: 'none', width: `${n.width}px` },
+    ], { duration: 340, easing: 'cubic-bezier(.22, 1, .36, 1)' });
+  });
+}
 let navDir = 0; // +1 = moving to a later week, -1 = earlier (for the slide direction)
 const flashCells = new Set(); // "eid:d" of shifts just saved, to glow briefly
 
@@ -313,6 +343,12 @@ function shell(r, body, anim = '') {
 }
 
 // ====================================================================== login
+// The header is pinned (so phones keep their top area green); leave room for it.
+function fitTopBar() {
+  const top = app.querySelector('header.top');
+  const h = top && getComputedStyle(top).position === 'fixed' ? top.offsetHeight : 0;
+  document.body.style.setProperty('--toph', `${h}px`);
+}
 function renderLogin(error = '') {
   app.innerHTML = `
   <div class="login">
@@ -491,6 +527,9 @@ function cellHtml(eid, d, r, { big = false } = {}) {
 
 // Which saved week comes before each week (for the "Copy" button). Cleared when weeks change.
 let prevCache = {};
+function hideHint(k) {
+  try { return localStorage.getItem(`kfs-hint-${k}`) === 'hidden'; } catch { return false; }
+}
 function tipsHidden() {
   try { return localStorage.getItem('kfs-tips') === 'hidden'; } catch { return false; }
 }
@@ -1183,14 +1222,24 @@ function viewCoverage(r) {
   const lane = (role) => {
     const open = role === 'kitchen' ? hrs.kitchen : hrs.store;
     const strip = c.lanes[role].map((s) => `<i class="${s.needed ? (s.n ? `n${Math.min(s.n, 3)}` : 'gap') : (s.n ? 'extra' : 'closed')}" style="left:${pct(s.t)};width:${(c.step / span) * 100}%" title="${fmtTime(s.t)}: ${s.n} working"></i>`).join('');
-    const bars = c.people.filter((p) => p.role === role).sort((a, b) => a.s - b.s)
-      .map((p) => `<div class="bar ${p.open ? 'open' : ''}" style="left:${pct(p.s)};width:calc(${((p.e - p.s) / span) * 100}% - 2px);--c:${esc(p.color || '#666')}">${esc(p.name)} <small>${fmtTime(p.s)}–${p.open ? '?' : fmtTime(p.e)}</small></div>`)
+    // One row per person; a split shift shows its parts side by side.
+    const rows = new Map();
+    for (const p of c.people.filter((x) => x.role === role)) {
+      if (!rows.has(p.eid)) rows.set(p.eid, []);
+      rows.get(p.eid).push(p);
+    }
+    const bars = [...rows.values()].sort((a, b) => Math.min(...a.map((p) => p.s)) - Math.min(...b.map((p) => p.s)))
+      .map((parts) => `<div class="brow">${parts.map((p) => `<div class="bar ${p.open ? 'open' : ''} ${flashCells.has(`${p.eid}:${d}`) ? 'flash' : ''}" data-bar data-eid="${p.eid}" data-d="${d}" data-bi="${p.bi}" data-s="${p.s}" data-role="${role}" tabindex="0" role="button"
+          aria-label="${esc(p.name)} ${fmtTime(p.s)} to ${p.open ? 'no end time' : fmtTime(p.e)}, drag to change"
+          style="left:${pct(p.s)};width:calc(${((p.e - p.s) / span) * 100}% - 3px);--c:${esc(p.color || '#666')}">
+          <span class="hdl l" data-h="l"></span><span class="bname">${esc(p.name)}</span> <small class="btime">${fmtTime(p.s)}–${p.open ? '?' : fmtTime(p.e)}</small><span class="hdl r" data-h="r"></span></div>`).join('')}</div>`)
       .join('');
     const gaps = c.gaps[role];
-    return `<div class="lane">
+    return `<div class="lane" data-lane="${role}">
       <div class="lanehead"><b>${ROLES[role]}</b>
         ${open === undefined ? `<span class="muted small">Hours not set</span><a class="small" href="#/settings">Set them</a>` : !open ? '<span class="muted small">Closed</span>' : gaps.length ? `<span class="badge bad">Nobody ${range(gaps)}</span>` : '<span class="badge good">Covered</span>'}</div>
-      <div class="track"><div class="strip">${strip}</div><div class="bars">${bars || '<span class="muted small none">Nobody scheduled</span>'}</div></div>
+      <div class="track"><div class="strip">${strip}</div><div class="bars">${bars || '<span class="muted small none">Nobody scheduled</span>'}</div>
+        ${week.closed?.[d] ? '' : `<button class="addbar" data-action="cov-add" data-role="${role}" data-d="${d}">+ Add someone</button>`}</div>
     </div>`;
   };
   const fmtRange = (x) => (x === undefined ? 'not set' : x ? `${fmtTime(x[0])} – ${fmtTime(x[1])}` : 'Closed');
@@ -1203,7 +1252,8 @@ function viewCoverage(r) {
       ${week.closed?.[d] ? `<button class="btn small" data-action="note" data-d="${d}">Reopen this day</button>` : `<button class="btn small" data-action="edit-hours" data-d="${d}">Change hours for this day</button>`}
     </header>
     ${c.storeGaps.length ? `<div class="problems slim">⚠ Nobody in the store ${range(c.storeGaps)}</div>` : ''}
-    <div class="timeline"><div class="ticks">${ticks.join('')}</div>${lane('kitchen')}${lane('cashier')}</div>
+    <div class="timeline" data-start="${c.start}" data-end="${c.end}"><div class="ticks">${ticks.join('')}</div>${lane('kitchen')}${lane('cashier')}</div>
+    ${!week.closed?.[d] && c.people.length && !hideHint('covdrag') ? `<div class="covtip"><span><b>Tip:</b> drag a bar to move it, drag its ends to change times, or drag it to ${ROLES.kitchen}/${ROLES.cashier} to switch jobs. Tap a bar to split it.</span><button class="linkbtn" data-action="hide-hint" data-hint="covdrag">Got it</button></div>` : ''}
     <p class="muted small key"><i class="k n2"></i> people working <i class="k gap"></i> nobody working while open <i class="k closed"></i> closed. Striped = no end time.</p>
   </section>`;
 }
@@ -1586,6 +1636,12 @@ app.addEventListener('click', async (ev) => {
       break;
     }
     case 'row-remove': await removeFromWeek(el.dataset.eid); break;
+    case 'hide-hint': {
+      try { localStorage.setItem(`kfs-hint-${el.dataset.hint}`, 'hidden'); } catch { /* private mode */ }
+      render(true);
+      break;
+    }
+    case 'cov-add': openAddPicker(el, el.dataset.role, +el.dataset.d); break;
     case 'hide-tips': {
       try { localStorage.setItem('kfs-tips', 'hidden'); } catch { /* private mode */ }
       const tipEl = el.closest('.tips');
@@ -1737,7 +1793,266 @@ app.addEventListener('submit', async (ev) => {
   }
 });
 
+
+// ====================================================================== hour-by-hour editing
+// Drag a bar to move it, drag its ends to change times, drag it into the other lane to switch jobs.
+// Tap a bar for split / join / switch job / edit / remove. "+ Add someone" puts a person in a lane.
+const SNAP = 15;
+let drag = null;
+const clampN = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const usualJob = (eid) => emp(eid)?.role || 'cashier';
+function withJob(b, role, eid) {
+  const { role: _r, pz: _p, ...rest } = b;
+  return role && role !== usualJob(eid) ? { ...rest, role } : rest;
+}
+async function saveParts(eid, d, blocks, label) {
+  const cur = state.week?.cells?.[eid]?.[d] || {};
+  const sorted = blocks.slice().sort((a, b) => a.s - b.s);
+  const note = cur.note ? { note: cur.note } : {};
+  const cell = sorted.length ? { blocks: sorted, ...note } : (cur.note ? note : null);
+  flashCells.add(`${eid}:${d}`);
+  await changeWeek(label, () => setCell(state.weekId, eid, d, cell));
+}
+function barData(bar) {
+  const eid = bar.dataset.eid;
+  const d = +bar.dataset.d;
+  const bi = +bar.dataset.bi;
+  const b = state.week?.cells?.[eid]?.[d]?.blocks?.[bi];
+  if (!b) return null;
+  const tl = bar.closest('.timeline');
+  const start = +tl.dataset.start;
+  const end = +tl.dataset.end;
+  const hrs = dayHours(state.settings, state.week, d);
+  const shownEnd = b.e ?? Math.max(hrs.store?.[1] ?? 0, b.s + 60);
+  return { bar, tl, eid, d, bi, b, start, end, e0: shownEnd, ppm: bar.parentElement.getBoundingClientRect().width / (end - start) };
+}
+const barPct = (g, m) => `${((m - g.start) / (g.end - g.start)) * 100}%`;
+
+app.addEventListener('pointerdown', (ev) => {
+  const bar = ev.target.closest('[data-bar]');
+  if (!bar || ev.button > 0) return;
+  const g = barData(bar);
+  if (!g) return;
+  closeBarPop();
+  const handle = ev.target.closest('[data-h]')?.dataset.h || '';
+  const touch = ev.pointerType !== 'mouse';
+  if (!touch) ev.preventDefault(); // no text selection while dragging with a mouse
+  drag = {
+    ...g, mode: handle || 'move', id: ev.pointerId, x0: ev.clientX, y0: ev.clientY, touch, active: false,
+    s0: g.b.s, s: g.b.s, e: g.e0, open: g.b.e == null, role0: bar.dataset.role, role: bar.dataset.role,
+  };
+  // On touch, the bar is picked up with a short press so normal swipes still scroll the page.
+  if (touch && !handle) drag.timer = setTimeout(startBarDrag, 260);
+});
+function startBarDrag() {
+  if (!drag || drag.active) return;
+  clearTimeout(drag.timer);
+  drag.active = true;
+  try { drag.bar.setPointerCapture(drag.id); } catch { /* already released */ }
+  drag.bar.classList.add('dragging');
+  document.body.classList.add('bar-dragging');
+  if (drag.touch) navigator.vibrate?.(8);
+  dragTip();
+}
+window.addEventListener('pointermove', (ev) => {
+  if (!drag || ev.pointerId !== drag.id) return;
+  const dx = ev.clientX - drag.x0;
+  const dy = ev.clientY - drag.y0;
+  if (!drag.active) {
+    const far = Math.hypot(dx, dy);
+    if (drag.touch && drag.mode === 'move') { if (far > 8) { clearTimeout(drag.timer); drag = null; } return; }
+    if (far < 4) return;
+    startBarDrag();
+  }
+  const g = drag;
+  const dm = Math.round(dx / g.ppm / SNAP) * SNAP;
+  const len = g.e0 - g.s0;
+  if (g.mode === 'move') {
+    g.s = clampN(g.s0 + dm, g.start, g.end - len);
+    g.e = g.s + len;
+    const lane = [...g.tl.querySelectorAll('[data-lane]')].find((l) => {
+      const r = l.getBoundingClientRect();
+      return ev.clientY >= r.top && ev.clientY < r.bottom;
+    });
+    if (lane) g.role = lane.dataset.lane;
+    g.tl.querySelectorAll('[data-lane]').forEach((l) => l.classList.toggle('drop', l.dataset.lane === g.role && g.role !== g.role0));
+    g.bar.style.translate = `0 ${dy}px`;
+  } else if (g.mode === 'l') {
+    g.s = clampN(g.s0 + dm, g.start, g.e0 - SNAP);
+  } else {
+    g.e = clampN(g.e0 + dm, g.s0 + SNAP, g.end);
+    g.open = false;
+  }
+  g.bar.dataset.s = g.s;
+  g.bar.style.left = barPct(g, g.s);
+  g.bar.style.width = `calc(${((g.e - g.s) / (g.end - g.start)) * 100}% - 3px)`;
+  const label = `${fmtTime(g.s)}–${g.open && g.mode !== 'r' ? '?' : fmtTime(g.e)}`;
+  const t = g.bar.querySelector('.btime');
+  if (t) t.textContent = label;
+  dragTip(`${label}${g.role !== g.role0 ? ` · ${ROLES[g.role]}` : ''}`);
+});
+window.addEventListener('pointerup', (ev) => {
+  if (!drag || ev.pointerId !== drag.id) return;
+  const g = endBarDrag();
+  const changed = g.s !== g.s0 || (g.mode !== 'move' && g.e !== g.e0) || g.role !== g.role0 || (g.mode === 'r' && g.b.e == null);
+  if (!g.active || (!changed && g.touch)) { openBarPop(g, ev.clientX); if (g.active) render(true); return; }
+  if (!changed) { render(true); return; }
+  const blocks = (state.week?.cells?.[g.eid]?.[g.d]?.blocks || []).map((x) => ({ ...x }));
+  if (!blocks[g.bi]) { render(true); return; }
+  const nb = withJob({ ...blocks[g.bi], s: g.s, e: g.open ? null : g.e }, g.role, g.eid);
+  blocks[g.bi] = nb;
+  const who = empLabel(g.eid);
+  saveParts(g.eid, g.d, blocks, g.role !== g.role0 ? `${who} → ${ROLES[g.role]} ${fmtBlock(nb)}` : `${who}: ${fmtBlock(nb)}`);
+});
+window.addEventListener('pointercancel', (ev) => {
+  if (!drag || ev.pointerId !== drag.id) return;
+  const g = endBarDrag();
+  if (g.active) render(true);
+});
+function endBarDrag() {
+  const g = drag;
+  drag = null;
+  clearTimeout(g.timer);
+  g.bar.classList.remove('dragging');
+  document.body.classList.remove('bar-dragging');
+  g.tl.querySelectorAll('.drop').forEach((l) => l.classList.remove('drop'));
+  dragTip(null);
+  return g;
+}
+// Keep the page from scrolling once a bar is picked up.
+document.addEventListener('touchmove', (ev) => { if (drag?.active) ev.preventDefault(); }, { passive: false });
+app.addEventListener('contextmenu', (ev) => { if (ev.target.closest('[data-bar]')) ev.preventDefault(); });
+
+let tipEl = null;
+function dragTip(text) {
+  if (text === null) { tipEl?.remove(); tipEl = null; return; }
+  if (!drag) return;
+  if (!tipEl) { tipEl = document.createElement('div'); tipEl.className = 'dragtip'; document.body.appendChild(tipEl); }
+  const r = drag.bar.getBoundingClientRect();
+  tipEl.textContent = text || `${fmtTime(drag.s)}–${drag.open ? '?' : fmtTime(drag.e)}`;
+  tipEl.style.left = `${clampN(r.left + r.width / 2, 70, innerWidth - 70)}px`;
+  tipEl.style.top = `${r.top - 8}px`;
+}
+
+// ---- tap menu on a bar
+let popEl = null;
+function closeBarPop() { popEl?.remove(); popEl = null; }
+function placePop(el, x, anchor) {
+  document.body.appendChild(el);
+  const r = anchor.getBoundingClientRect();
+  const w = el.offsetWidth;
+  const h = el.offsetHeight;
+  el.style.left = `${clampN(x - w / 2, 8, innerWidth - w - 8)}px`;
+  el.style.top = `${r.bottom + 8 + h > innerHeight - 8 ? Math.max(8, r.top - h - 8) : r.bottom + 8}px`;
+}
+function openBarPop(g, x) {
+  closeBarPop();
+  const cell = state.week?.cells?.[g.eid]?.[g.d];
+  const b = cell?.blocks?.[g.bi];
+  if (!b) return;
+  const e = emp(g.eid);
+  const role = blockRole(b, e);
+  const other = role === 'kitchen' ? 'cashier' : 'kitchen';
+  const end = b.e ?? g.e0;
+  const bar = app.querySelector(`[data-bar][data-eid="${g.eid}"][data-d="${g.d}"][data-bi="${g.bi}"]`) || g.bar;
+  const rect = bar.getBoundingClientRect();
+  let t = b.s + Math.round(((x - rect.left) / g.ppm) / SNAP) * SNAP;
+  const canSplit = end - b.s >= 2 * SNAP;
+  t = clampN(t, b.s + SNAP, end - SNAP);
+  const join = (cell.blocks || []).map((x2, i) => ({ ...x2, i }))
+    .find((o) => o.i !== g.bi && blockRole(o, e) === role && ((b.e != null && o.s === b.e) || (o.e != null && o.e === b.s)));
+  popEl = document.createElement('div');
+  popEl.className = 'barpop';
+  popEl.setAttribute('role', 'menu');
+  popEl.innerHTML = `
+    <div class="bp-head">${avatar(e)}<div><b>${esc(e.name)}</b><span>${fmtBlock(b)} · ${ROLES[role]}</span></div></div>
+    ${canSplit ? `<button data-bp="split"><i>✂</i>Split at ${fmtTime(t)}</button>` : ''}
+    ${join ? `<button data-bp="join"><i>⤺</i>Join with ${fmtBlock(join)}</button>` : ''}
+    <button data-bp="job"><i>⇄</i>Move to ${ROLES[other]}</button>
+    <button data-bp="edit"><i>✎</i>Edit times…</button>
+    <button data-bp="remove" class="bad"><i>✕</i>Remove ${cell.blocks.length > 1 ? 'this part' : 'shift'}</button>`;
+  placePop(popEl, x, bar);
+  popEl.onclick = (ev) => {
+    const btn = ev.target.closest('[data-bp]');
+    if (!btn) return;
+    closeBarPop();
+    const blocks = cell.blocks.map((x2) => ({ ...x2 }));
+    const who = e.name;
+    switch (btn.dataset.bp) {
+      case 'split':
+        blocks.splice(g.bi, 1, { ...b, e: t }, { ...b, s: t });
+        saveParts(g.eid, g.d, blocks, `Split ${who} at ${fmtTime(t)}. Drag a part to move it or switch jobs`);
+        break;
+      case 'join': {
+        const merged = { ...b, s: Math.min(b.s, join.s), e: b.e == null || join.e == null ? null : Math.max(b.e, join.e) };
+        const rest = blocks.filter((_, i) => i !== g.bi && i !== join.i);
+        saveParts(g.eid, g.d, [...rest, merged], `Joined ${who}: ${fmtBlock(merged)}`);
+        break;
+      }
+      case 'job':
+        blocks[g.bi] = withJob(b, other, g.eid);
+        saveParts(g.eid, g.d, blocks, `${who} → ${ROLES[other]} ${fmtBlock(b)}`);
+        break;
+      case 'edit': openCellEditor(g.eid, g.d); break;
+      case 'remove':
+        blocks.splice(g.bi, 1);
+        saveParts(g.eid, g.d, blocks, `Removed ${who} ${fmtBlock(b)}`);
+        break;
+      default:
+    }
+  };
+}
+// "+ Add someone" → pick a person; they get a 4-hour shift at the first gap in that lane.
+function openAddPicker(btn, role, d) {
+  closeBarPop();
+  const week = state.week;
+  if (!week) return;
+  const people = week.rows.map(emp).filter(Boolean);
+  popEl = document.createElement('div');
+  popEl.className = 'barpop pick';
+  popEl.innerHTML = `<div class="bp-head"><div><b>Add to ${ROLES[role]}</b><span>${DAYS[d]}</span></div></div>
+    <div class="bp-list">${people.map((p) => {
+      const c = week.cells?.[p.id]?.[d];
+      const now = c?.off ? 'Off' : (c?.blocks || []).map(fmtBlock).join(', ');
+      return `<button data-pick="${p.id}">${avatar(p)}<span>${esc(p.name)}${now ? `<small>${esc(now)}</small>` : ''}</span></button>`;
+    }).join('')}</div>`;
+  const r = btn.getBoundingClientRect();
+  placePop(popEl, r.left + r.width / 2, btn);
+  popEl.onclick = (ev) => {
+    const b = ev.target.closest('[data-pick]');
+    if (!b) return;
+    closeBarPop();
+    const eid = b.dataset.pick;
+    const cov = coverage({ week: state.week, employees: state.employees, settings: state.settings, d });
+    const open = role === 'kitchen' ? (cov.hours.kitchen || cov.hours.store) : cov.hours.store;
+    const cur = state.week.cells?.[eid]?.[d];
+    const blocks = cur?.off ? [] : (cur?.blocks || []).map((x) => ({ ...x }));
+    let s = cov.gaps[role][0]?.[0] ?? open?.[0] ?? 540;
+    for (const x of blocks) if (s < (x.e ?? 1440) && x.s < s + 240) s = x.e ?? x.s + 240;
+    s = Math.min(s, 1440 - 60);
+    let e = Math.min(s + 240, 1440);
+    if (open && e > open[1] && open[1] - s >= 60) e = open[1];
+    const nb = withJob({ s, e }, role, eid);
+    saveParts(eid, d, [...blocks, nb], `Added ${empLabel(eid)} ${fmtBlock(nb)} (${ROLES[role]})`);
+  };
+}
+window.addEventListener('pointerdown', (ev) => {
+  if (popEl && !popEl.contains(ev.target) && !ev.target.closest('[data-action=cov-add]')) closeBarPop();
+}, true);
+window.addEventListener('scroll', () => closeBarPop(), { passive: true });
+window.addEventListener('resize', () => closeBarPop());
+app.addEventListener('keydown', (ev) => {
+  const bar = ev.target.closest?.('[data-bar]');
+  if (!bar || (ev.key !== 'Enter' && ev.key !== ' ')) return;
+  ev.preventDefault();
+  const g = barData(bar);
+  const r = bar.getBoundingClientRect();
+  if (g) openBarPop(g, r.left + r.width / 2);
+});
+
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && popEl) { closeBarPop(); return; }
+  if (e.key === 'Escape' && drag) { const g = endBarDrag(); if (g.active) render(true); return; }
   if (e.key === 'Escape' && modalRoot.innerHTML) closeModal();
   if (isEditing() || modalRoot.innerHTML) return;
   const r = route();
