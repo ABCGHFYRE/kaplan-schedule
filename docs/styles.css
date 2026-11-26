@@ -441,3 +441,15 @@ input[type=time] { padding: .5rem .6rem; border: 1px solid #d3dad6; border-radiu
   .pmain { flex-wrap: wrap; row-gap: 0; }
   .pmain .phrs { width: 100%; margin-left: 1.65rem; }
 }
+
+/* ---------- image preview ---------- */
+.modal.preview { width: min(980px, 100%); }
+.previewbox { background: #e9f0ec; border-radius: 12px; padding: .5rem; max-height: 68vh; overflow: auto; }
+.previewbox img { display: block; width: 100%; height: auto; border-radius: 8px; }
+.previewbtns { justify-content: center !important; }
+.previewbtns .btn { min-width: 8.5rem; }
+@media (max-width: 760px) {
+  .modal.preview { padding: .9rem; }
+  .previewbox { max-height: 60vh; padding: .25rem; }
+  .previewbtns .btn { flex: 1; min-width: 0; }
+}

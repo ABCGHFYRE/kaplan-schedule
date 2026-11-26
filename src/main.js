@@ -261,7 +261,7 @@ function viewWeek(r) {
       <ol>
         <li><b>Add your team</b> on the People page.</li>
         <li>Come back here and press <b>Start this week</b>.</li>
-        <li>Tap any box to add a shift. When you're done, press <b>Save image</b> and send it to the group chat.</li>
+        <li>Tap any box to add a shift. When you're done, press <b>Share image</b> and send it to the group chat.</li>
       </ol>
       <a class="btn primary" href="#/people">Add your team</a>
       <p class="muted small">Have a backup or history file? Load it in <a href="#/settings">Settings</a>.</p>
@@ -291,7 +291,7 @@ function viewWeek(r) {
   const ot = state.settings.overtime || 40;
   const today = ymd(new Date());
   const tools = `
-      <button class="btn primary" data-action="png" title="Download a picture of this week to send to the group chat">Save image</button>
+      <button class="btn primary" data-action="png" title="See a picture of this week and send it to the group chat">Share image</button>
       <div class="menu"><button class="btn" data-action="menu">More ▾</button>
         <div class="menu-list">
           <button data-action="print">Print</button>
@@ -322,7 +322,7 @@ function viewWeek(r) {
       <b>How it works</b>
       <span><i>1</i> Tap a box to set a shift</span>
       <span><i>2</i> Tap a day to add a note</span>
-      <span><i>3</i> <b>Save image</b> → send to the group chat</span>
+      <span><i>3</i> <b>Share image</b> → send to the group chat</span>
       <button class="btn small" data-action="hide-tips">Got it</button>
     </div>`;
 
@@ -404,7 +404,7 @@ function viewWeek(r) {
   </div>
   <div class="belowgrid">
     ${addPerson}
-    <span class="muted small">Use ⋯ next to a name to move someone or take them off this week. Shifts with no end time don't count toward hours. Hours don't show on the saved image.</span>
+    <span class="muted small">Use ⋯ next to a name to move someone or take them off this week. Shifts with no end time don't count toward hours. Hours don't show on the shared image.</span>
   </div>`;
 }
 
@@ -564,6 +564,54 @@ function openCellEditor(eid, d) {
   // Shifts saved with no end time open with the box already checked.
   st.blocks.forEach((b) => { if (b.s != null && b.e == null) b.noEnd = true; });
   draw();
+}
+
+function openImagePreview(blob, weekId) {
+  const name = `kaplan-schedule-${weekId}.png`;
+  const file = new File([blob], name, { type: 'image/png' });
+  const url = URL.createObjectURL(blob);
+  let canShare = false;
+  try { canShare = !!navigator.canShare && navigator.canShare({ files: [file] }); } catch { canShare = false; }
+  const canCopy = !!(navigator.clipboard && window.ClipboardItem);
+  closeModal();
+  modalRoot.innerHTML = `
+  <div class="overlay" data-x><div class="modal preview">
+    <header><div><b>Schedule image</b><div class="muted small">Week of ${weekLabel(weekId)} · this is what the group chat will see</div></div>
+      <button class="btn icon ghost" data-x aria-label="Close">✕</button></header>
+    <div class="previewbox"><img src="${url}" alt="Schedule for the week of ${weekLabel(weekId)}"></div>
+    <footer class="previewbtns">
+      ${canShare ? '<button class="btn primary" data-share>Share…</button>' : ''}
+      ${canCopy ? `<button class="btn ${canShare ? '' : 'primary'}" data-copy>Copy image</button>` : ''}
+      <button class="btn ${canShare || canCopy ? '' : 'primary'}" data-download>Download</button>
+    </footer>
+  </div></div>`;
+  const done = () => { closeModal(); setTimeout(() => URL.revokeObjectURL(url), 1000); };
+  modalRoot.onclick = async (ev) => {
+    const t = ev.target.closest('button') || ev.target;
+    if (t.hasAttribute('data-x')) { done(); return; }
+    if (t.hasAttribute('data-share')) {
+      try {
+        await navigator.share({ files: [file], title: `Schedule · week of ${weekLabel(weekId)}` });
+      } catch (e) {
+        if (e.name !== 'AbortError') toast('Sharing didn\'t work here. Try Download instead.', 'bad');
+      }
+    } else if (t.hasAttribute('data-copy')) {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        toast('Copied — paste it into the group chat', 'ok');
+      } catch {
+        toast('Couldn\'t copy here. Try Download instead.', 'bad');
+      }
+    } else if (t.hasAttribute('data-download')) {
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = name;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      toast('Image downloaded', 'ok');
+    }
+  };
 }
 
 async function removeFromWeek(eid) {
@@ -1010,16 +1058,13 @@ app.addEventListener('click', async (ev) => {
       break;
     case 'print': window.print(); break;
     case 'png': {
-      const blob = await renderWeekPng({ weekId: wid, week, employees: state.employees });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `kaplan-schedule-${wid}.png`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
-      toast('Image saved', 'ok');
+      el.disabled = true;
+      try {
+        const blob = await renderWeekPng({ weekId: wid, week, employees: state.employees });
+        openImagePreview(blob, wid);
+      } finally {
+        el.disabled = false;
+      }
       break;
     }
     case 'hours-reset': await guard(() => setDayHours(wid, +el.dataset.d, null)); break;
