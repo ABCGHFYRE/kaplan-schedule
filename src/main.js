@@ -2,7 +2,7 @@ import { auth, login, logout, onAuthStateChanged } from './firebase.js';
 import {
   state, subscribe, startData, stopData, watchWeek, setCell, setCells, setNote, setDayHours, setRows,
   createWeek, deleteWeek, restoreWeek, setClosed, markShared, loadWeeks, previousSavedWeek, addEmployee, updateEmployee, setAvailability, addTimeOff,
-  deleteTimeOff, saveSettings, importHistory, exportAll, DEFAULT_SETTINGS, fixJobsOnce,
+  deleteTimeOff, saveSettings, importHistory, exportAll, DEFAULT_SETTINGS, fixJobsOnce, readWeek,
 } from './store.js';
 import {
   DAYS, DAYS_SHORT, MONTHS, ROLES, PALETTE, esc, ymd, addDays, mondayOf, weekLabel, dayLabel, prettyDate,
@@ -103,7 +103,7 @@ document.addEventListener('focusout', () => {
 });
 function isEditing() {
   const a = document.activeElement;
-  if (drag?.active) return true; // don't redraw under someone's finger
+  if (drag?.active || ins?.dirty) return true; // don't redraw under someone's finger / mid-nudge
   return a && app.contains(a) && ['INPUT', 'TEXTAREA', 'SELECT'].includes(a.tagName) && a.type !== 'button';
 }
 
@@ -118,6 +118,7 @@ function render(force = false) {
   const r = state.user ? route() : null;
   const navKey = r ? `${r.view}|${r.weekId}|${pickedDay ? `${pickedDay.weekId}:${pickedDay.d}` : ''}` : 'login';
   const kind = lastNavKey && navKey !== lastNavKey ? transitionKind(lastAuth, authKey, lastRoute, r) : '';
+  if (kind && ins) closeInspector();
   // Redrawing mid-animation would cut it off; data-only updates wait for it to finish (well under a second).
   // Something the user just did (force) wins: finish the animation now instead of waiting.
   if (!kind && vtRunning) {
@@ -172,6 +173,7 @@ function paint(kind = '', vt = false) {
   app.innerHTML = shell(r, body, anim);
   window.scrollTo(0, scroll);
   if (before) glideBars(before);
+  syncInspector();
   placePills(true);
   fitTopBar();
   afterPaint(!busy);
@@ -396,7 +398,7 @@ function weekNav(r, extra = '') {
       <button class="${r.view === 'week' ? 'on' : ''}" data-go="week/${r.weekId}">Week</button>
       <button class="${r.view === 'coverage' ? 'on' : ''}" data-go="coverage/${r.weekId}">Hour by hour</button>
     </div>
-    <div class="actions">${extra}</div>
+    <div class="actions">${undoButtons()}${extra}</div>
   </div>`;
 }
 
@@ -431,25 +433,88 @@ function timeSelect(attrs, value, { open = false, closed = false, from = 240, to
   return `<select ${attrs}>${opts.join('')}</select>`;
 }
 
-function toast(msg, kind = '', undo = null) {
-  toastRoot.innerHTML = `<div class="toast ${kind} ${undo ? 'has-undo' : ''}"><span>${esc(msg)}</span>${undo ? '<button class="undo" data-undo>Undo</button>' : ''}</div>`;
-  toastRoot.onclick = undo ? async (ev) => {
+function toast(msg, kind = '', action = null, actionLabel = 'Undo') {
+  toastRoot.innerHTML = `<div class="toast ${kind} ${action ? 'has-undo' : ''}"><span>${esc(msg)}</span>${action ? `<button class="undo" data-undo>${esc(actionLabel)}</button>` : ''}</div>`;
+  toastRoot.onclick = action ? async (ev) => {
     if (!ev.target.closest('[data-undo]')) return;
     toastRoot.innerHTML = '';
     clearTimeout(toast.t);
-    try { await undo(); toast('Undone', 'ok'); } catch (e) { console.error(e); toast("Couldn't undo", 'bad'); }
+    try { await action(); } catch (e) { console.error(e); toast("Couldn't do that", 'bad'); }
   } : null;
   clearTimeout(toast.t);
   toast.t = setTimeout(() => { toastRoot.innerHTML = ''; }, undo ? 7000 : 3200);
 }
 
-/** Runs a change to the open week, then offers Undo (puts the whole week back as it was). */
-async function changeWeek(label, fn) {
+// ---- Undo / Redo: every schedule change is remembered (this session) and can be stepped back and forward.
+const hist = { undo: [], redo: [] };
+let histBusy = false;
+const copyWeek = (w) => (w ? JSON.parse(JSON.stringify(w)) : null);
+const weekNow = async (wid) => (state.weekId === wid && state.ready.week ? copyWeek(state.week) : readWeek(wid));
+async function putWeek(wid, snap, cur) {
+  // Keep "last shared" as it is now, so undo doesn't fake the share reminder.
+  await restoreWeek(wid, snap ? { ...snap, shared: cur?.shared ?? snap.shared ?? null } : null);
+}
+function showWeekOf(wid) {
+  if (state.weekId === wid) return;
+  const v = route().view === 'coverage' ? 'coverage' : 'week';
+  go(`#/${v}/${wid}`);
+}
+async function undo() {
+  if (histBusy || !hist.undo.length) return;
+  histBusy = true;
+  const e = hist.undo.pop();
+  try {
+    showWeekOf(e.wid);
+    const cur = await weekNow(e.wid);
+    await putWeek(e.wid, e.before, cur);
+    e.after = cur;
+    hist.redo.push(e);
+    toast(`Undid: ${e.label}`, 'ok', redo, 'Redo');
+  } catch (err) {
+    console.error(err);
+    hist.undo.push(e);
+    toast("Couldn't undo", 'bad');
+  } finally { histBusy = false; render(); }
+}
+async function redo() {
+  if (histBusy || !hist.redo.length) return;
+  histBusy = true;
+  const e = hist.redo.pop();
+  try {
+    showWeekOf(e.wid);
+    const cur = await weekNow(e.wid);
+    await putWeek(e.wid, e.after, cur);
+    e.before = cur;
+    hist.undo.push(e);
+    toast(`Redid: ${e.label}`, 'ok', undo, 'Undo');
+  } catch (err) {
+    console.error(err);
+    hist.redo.push(e);
+    toast("Couldn't redo", 'bad');
+  } finally { histBusy = false; render(); }
+}
+function undoButtons() {
+  const u = hist.undo[hist.undo.length - 1];
+  const r = hist.redo[hist.redo.length - 1];
+  const icon = (flip) => `<svg viewBox="0 0 24 24" aria-hidden="true" ${flip ? 'style="transform:scaleX(-1)"' : ''}><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>`;
+  return `<div class="undoredo">
+    <button class="btn icon" data-action="undo" ${u && !histBusy ? '' : 'disabled'} title="${u ? esc(`Undo: ${u.label}`) : 'Nothing to undo'}" aria-label="Undo">${icon(false)}</button>
+    <button class="btn icon" data-action="redo" ${r && !histBusy ? '' : 'disabled'} title="${r ? esc(`Redo: ${r.label}`) : 'Nothing to redo'}" aria-label="Redo">${icon(true)}</button>
+  </div>`;
+}
+
+/** Runs a change to the open week and remembers it for Undo / Redo. */
+async function changeWeek(label, fn, { quiet = false } = {}) {
   const wid = state.weekId;
-  const before = state.week ? JSON.parse(JSON.stringify(state.week)) : null;
+  const before = copyWeek(state.week);
   try {
     await fn();
-    toast(label, 'ok', () => restoreWeek(wid, before));
+    const entry = { wid, label, before, after: null };
+    hist.undo.push(entry);
+    if (hist.undo.length > 80) hist.undo.shift();
+    hist.redo = [];
+    if (!quiet) toast(label, 'ok', () => (hist.undo[hist.undo.length - 1] === entry ? undo() : null));
+    render();
   } catch (e) {
     console.error(e);
     toast(e.code === 'permission-denied' ? 'Permission denied — check the Firestore rules.' : (e.message || String(e)), 'bad');
@@ -1229,8 +1294,8 @@ function viewCoverage(r) {
       rows.get(p.eid).push(p);
     }
     const bars = [...rows.values()].sort((a, b) => Math.min(...a.map((p) => p.s)) - Math.min(...b.map((p) => p.s)))
-      .map((parts) => `<div class="brow">${parts.map((p) => `<div class="bar ${p.open ? 'open' : ''} ${flashCells.has(`${p.eid}:${d}`) ? 'flash' : ''}" data-bar data-eid="${p.eid}" data-d="${d}" data-bi="${p.bi}" data-s="${p.s}" data-role="${role}" tabindex="0" role="button"
-          aria-label="${esc(p.name)} ${fmtTime(p.s)} to ${p.open ? 'no end time' : fmtTime(p.e)}, drag to change"
+      .map((parts) => `<div class="brow">${parts.map((p) => `<div class="bar ${p.open ? 'open' : ''} ${flashCells.has(`${p.eid}:${d}`) ? 'flash' : ''}" data-bar data-eid="${p.eid}" data-d="${d}" data-bi="${p.bi}" data-s="${p.s}" data-e="${p.e}" data-role="${role}" tabindex="0" role="button"
+          aria-label="${esc(p.name)} ${fmtTime(p.s)} to ${p.open ? 'no end time' : fmtTime(p.e)}. Tap to adjust, drag to move"
           style="left:${pct(p.s)};width:calc(${((p.e - p.s) / span) * 100}% - 3px);--c:${esc(p.color || '#666')}">
           <span class="hdl l" data-h="l"></span><span class="bname">${esc(p.name)}</span> <small class="btime">${fmtTime(p.s)}–${p.open ? '?' : fmtTime(p.e)}</small><span class="hdl r" data-h="r"></span></div>`).join('')}</div>`)
       .join('');
@@ -1253,7 +1318,7 @@ function viewCoverage(r) {
     </header>
     ${c.storeGaps.length ? `<div class="problems slim">⚠ Nobody in the store ${range(c.storeGaps)}</div>` : ''}
     <div class="timeline" data-start="${c.start}" data-end="${c.end}"><div class="ticks">${ticks.join('')}</div>${lane('kitchen')}${lane('cashier')}</div>
-    ${!week.closed?.[d] && c.people.length && !hideHint('covdrag') ? `<div class="covtip"><span><b>Tip:</b> drag a bar to move it, drag its ends to change times, or drag it to ${ROLES.kitchen}/${ROLES.cashier} to switch jobs. Tap a bar to split it.</span><button class="linkbtn" data-action="hide-hint" data-hint="covdrag">Got it</button></div>` : ''}
+    ${!week.closed?.[d] && c.people.length && !hideHint('covdrag') ? `<div class="covtip"><span><b>Tip:</b> tap a bar for exact −/+ controls and Split. Or drag it: the middle moves it, the ends change times, and dragging it to ${ROLES.kitchen}/${ROLES.cashier} switches jobs.</span><button class="linkbtn" data-action="hide-hint" data-hint="covdrag">Got it</button></div>` : ''}
     <p class="muted small key"><i class="k n2"></i> people working <i class="k gap"></i> nobody working while open <i class="k closed"></i> closed. Striped = no end time.</p>
   </section>`;
 }
@@ -1326,7 +1391,7 @@ function openHoursEditor(d, { usual = false } = {}) {
   modalRoot.onclick = async (ev) => {
     const t = ev.target;
     if (t.hasAttribute('data-x')) closeModal();
-    else if (t.hasAttribute('data-reset')) { closeModal(); await guard(() => setDayHours(state.weekId, d, null)); }
+    else if (t.hasAttribute('data-reset')) { closeModal(); await changeWeek(`${DAYS[d]} back to usual hours`, () => setDayHours(state.weekId, d, null)); }
     else if (t.hasAttribute('data-ok')) {
       // Use whatever is in the boxes right now, even if the last change event hasn't fired.
       for (const key of ['store', 'kitchen']) {
@@ -1339,7 +1404,7 @@ function openHoursEditor(d, { usual = false } = {}) {
         const next = all.map((x, i) => (st.everyDay || i === d ? h : cleanHours({ store: x.store === undefined ? [300, 1230] : x.store, kitchen: x.kitchen })));
         await guard(() => saveSettings({ defaultHours: next }), 'Hours saved');
       } else {
-        await guard(() => setDayHours(state.weekId, d, cleanHours(st)), 'Hours saved');
+        await changeWeek(`${DAYS[d]} hours changed`, () => setDayHours(state.weekId, d, cleanHours(st)));
       }
     }
   };
@@ -1592,7 +1657,17 @@ app.addEventListener('click', async (ev) => {
       const m = el.parentElement;
       const was = m.classList.contains('open');
       document.querySelectorAll('.menu.open').forEach((x) => x.classList.remove('open'));
-      if (!was) m.classList.add('open');
+      if (!was) {
+        m.classList.add('open');
+        // Keep the menu fully on screen (small phones).
+        const list = m.querySelector('.menu-list');
+        if (list) {
+          list.style.translate = '';
+          const r = list.getBoundingClientRect();
+          const dx = r.left < 8 ? 8 - r.left : r.right > innerWidth - 8 ? innerWidth - 8 - r.right : 0;
+          if (dx) list.style.translate = `${dx}px 0`;
+        }
+      }
       break;
     }
     case 'pick-day': pickedDay = { weekId: wid, d: +el.dataset.d }; render(true); break;
@@ -1632,10 +1707,12 @@ app.addEventListener('click', async (ev) => {
       const j = a === 'row-up' ? i - 1 : i + 1;
       const rows = week.rows.slice();
       [rows[i], rows[j]] = [rows[j], rows[i]];
-      await guard(() => setRows(wid, rows));
+      await changeWeek(`Moved ${empLabel(rows[j])} ${a === 'row-up' ? 'up' : 'down'}`, () => setRows(wid, rows), { quiet: true });
       break;
     }
     case 'row-remove': await removeFromWeek(el.dataset.eid); break;
+    case 'undo': await undo(); break;
+    case 'redo': await redo(); break;
     case 'hide-hint': {
       try { localStorage.setItem(`kfs-hint-${el.dataset.hint}`, 'hidden'); } catch { /* private mode */ }
       render(true);
@@ -1657,7 +1734,7 @@ app.addEventListener('click', async (ev) => {
       }
       break;
     }
-    case 'hours-reset': await guard(() => setDayHours(wid, +el.dataset.d, null)); break;
+    case 'hours-reset': await changeWeek(`${DAYS[+el.dataset.d]} back to usual hours`, () => setDayHours(wid, +el.dataset.d, null)); break;
     case 'new-emp': await newEmployeeFlow(); break;
     case 'set-role': await guard(() => updateEmployee(el.dataset.eid, { role: el.dataset.role })); break;
     case 'add-off': openTimeOffForm(el.dataset.eid); break;
@@ -1740,7 +1817,7 @@ app.addEventListener('change', async (ev) => {
     t.value = '';
     if (!id) return;
     if (id === '__new') id = await newEmployeeFlow();
-    if (id) await guard(() => setRows(state.weekId, [...state.week.rows.filter((x) => x !== id), id]));
+    if (id) await changeWeek(`Added ${empLabel(id)} to this week`, () => setRows(state.weekId, [...state.week.rows.filter((x) => x !== id), id]));
     return;
   }
   const tr = t.closest('tr[data-eid]');
@@ -1837,8 +1914,12 @@ app.addEventListener('pointerdown', (ev) => {
   const handle = ev.target.closest('[data-h]')?.dataset.h || '';
   const touch = ev.pointerType !== 'mouse';
   if (!touch) ev.preventDefault(); // no text selection while dragging with a mouse
+  // Times worth sticking to: open/close, other shifts' starts and ends.
+  const hrs = dayHours(state.settings, state.week, g.d);
+  const stick = new Set([...(hrs.store || []), ...(hrs.kitchen || [])]);
+  g.tl.querySelectorAll('[data-bar]').forEach((o) => { if (o !== bar) { stick.add(+o.dataset.s); stick.add(+o.dataset.e); } });
   drag = {
-    ...g, mode: handle || 'move', id: ev.pointerId, x0: ev.clientX, y0: ev.clientY, touch, active: false,
+    ...g, stick: [...stick], mode: handle || 'move', id: ev.pointerId, x0: ev.clientX, y0: ev.clientY, touch, active: false,
     s0: g.b.s, s: g.b.s, e: g.e0, open: g.b.e == null, role0: bar.dataset.role, role: bar.dataset.role,
   };
   // On touch, the bar is picked up with a short press so normal swipes still scroll the page.
@@ -1865,11 +1946,17 @@ window.addEventListener('pointermove', (ev) => {
     startBarDrag();
   }
   const g = drag;
-  const dm = Math.round(dx / g.ppm / SNAP) * SNAP;
   const len = g.e0 - g.s0;
+  const raw = dx / g.ppm;
+  const prev = `${g.s}|${g.e}`;
+  let guide = null;
   if (g.mode === 'move') {
-    g.s = clampN(g.s0 + dm, g.start, g.end - len);
+    const a = snapTime(g, g.s0 + raw);
+    const b = snapTime(g, g.s0 + len + raw);
+    const useEnd = b.hit && (!a.hit || b.dist < a.dist);
+    g.s = clampN(useEnd ? b.t - len : a.t, g.start, g.end - len);
     g.e = g.s + len;
+    guide = useEnd ? (b.hit ? g.e : null) : (a.hit ? g.s : null);
     const lane = [...g.tl.querySelectorAll('[data-lane]')].find((l) => {
       const r = l.getBoundingClientRect();
       return ev.clientY >= r.top && ev.clientY < r.bottom;
@@ -1878,11 +1965,17 @@ window.addEventListener('pointermove', (ev) => {
     g.tl.querySelectorAll('[data-lane]').forEach((l) => l.classList.toggle('drop', l.dataset.lane === g.role && g.role !== g.role0));
     g.bar.style.translate = `0 ${dy}px`;
   } else if (g.mode === 'l') {
-    g.s = clampN(g.s0 + dm, g.start, g.e0 - SNAP);
+    const a = snapTime(g, g.s0 + raw);
+    g.s = clampN(a.t, g.start, g.e0 - SNAP);
+    guide = a.hit ? g.s : null;
   } else {
-    g.e = clampN(g.e0 + dm, g.s0 + SNAP, g.end);
+    const a = snapTime(g, g.e0 + raw);
+    g.e = clampN(a.t, g.s0 + SNAP, g.end);
     g.open = false;
+    guide = a.hit ? g.e : null;
   }
+  snapGuide(g, guide);
+  if (g.touch && prev !== `${g.s}|${g.e}`) navigator.vibrate?.(2);
   g.bar.dataset.s = g.s;
   g.bar.style.left = barPct(g, g.s);
   g.bar.style.width = `calc(${((g.e - g.s) / (g.end - g.start)) * 100}% - 3px)`;
@@ -1895,13 +1988,15 @@ window.addEventListener('pointerup', (ev) => {
   if (!drag || ev.pointerId !== drag.id) return;
   const g = endBarDrag();
   const changed = g.s !== g.s0 || (g.mode !== 'move' && g.e !== g.e0) || g.role !== g.role0 || (g.mode === 'r' && g.b.e == null);
-  if (!g.active || (!changed && g.touch)) { openBarPop(g, ev.clientX); if (g.active) render(true); return; }
+  if (!g.active || (!changed && g.touch)) { openInspector(g.eid, g.d, g.bi); if (g.active) render(true); return; }
   if (!changed) { render(true); return; }
   const blocks = (state.week?.cells?.[g.eid]?.[g.d]?.blocks || []).map((x) => ({ ...x }));
   if (!blocks[g.bi]) { render(true); return; }
   const nb = withJob({ ...blocks[g.bi], s: g.s, e: g.open ? null : g.e }, g.role, g.eid);
   blocks[g.bi] = nb;
   const who = empLabel(g.eid);
+  const sorted = blocks.slice().sort((a, b) => a.s - b.s);
+  if (ins) { flushInspector(); ins = { ...ins, eid: g.eid, d: g.d, bi: sorted.indexOf(nb) }; }
   saveParts(g.eid, g.d, blocks, g.role !== g.role0 ? `${who} → ${ROLES[g.role]} ${fmtBlock(nb)}` : `${who}: ${fmtBlock(nb)}`);
 });
 window.addEventListener('pointercancel', (ev) => {
@@ -1916,6 +2011,7 @@ function endBarDrag() {
   g.bar.classList.remove('dragging');
   document.body.classList.remove('bar-dragging');
   g.tl.querySelectorAll('.drop').forEach((l) => l.classList.remove('drop'));
+  g.tl.querySelector('.snapline')?.remove();
   dragTip(null);
   return g;
 }
@@ -1934,7 +2030,249 @@ function dragTip(text) {
   tipEl.style.top = `${r.top - 8}px`;
 }
 
-// ---- tap menu on a bar
+// Snap to 15 minutes, but stick to important times (open/close, others' edges) and whole hours when close.
+function snapTime(g, raw) {
+  let best = null;
+  const near = (t, px) => { const dist = Math.abs(t - raw) * g.ppm; if (dist <= px && (!best || dist < best.dist)) best = { t, dist, hit: true }; };
+  for (const t of g.stick) near(t, 11);
+  if (!best) near(Math.round(raw / 60) * 60, 6);
+  return best || { t: Math.round(raw / SNAP) * SNAP, dist: 0, hit: false };
+}
+function snapGuide(g, t) {
+  let line = g.tl.querySelector('.snapline');
+  if (t == null) { line?.remove(); return; }
+  if (!line) { line = document.createElement('div'); line.className = 'snapline'; g.tl.appendChild(line); }
+  const track = g.bar.parentElement.getBoundingClientRect();
+  const tl = g.tl.getBoundingClientRect();
+  line.style.left = `${track.left - tl.left + g.tl.scrollLeft + (t - g.start) * g.ppm}px`;
+}
+
+// ---- tap a bar: a control panel docks at the bottom with exact −/+ controls
+let ins = null; // { eid, d, bi, s, e, role, split, dirty, timer }
+let insEl = null;
+let holdT = null;
+const insCell = () => state.week?.cells?.[ins.eid]?.[ins.d];
+const insBlock = () => insCell()?.blocks?.[ins.bi];
+const shownEnd = () => ins.e ?? Math.max(dayHours(state.settings, state.week, ins.d).store?.[1] ?? 0, ins.s + 60);
+function insJoin() {
+  const e = emp(ins.eid);
+  return (insCell()?.blocks || []).map((x, i) => ({ ...x, i }))
+    .find((o) => o.i !== ins.bi && blockRole(o, e) === ins.role && ((ins.e != null && o.s === ins.e) || (o.e != null && o.e === ins.s)));
+}
+function openInspector(eid, d, bi) {
+  flushInspector();
+  closeBarPop();
+  const b = state.week?.cells?.[eid]?.[d]?.blocks?.[bi];
+  if (!b) { closeInspector(); return; }
+  ins = { eid, d, bi, s: b.s, e: b.e, role: blockRole(b, emp(eid)), dirty: false, timer: null };
+  ins.split = defaultSplit();
+  if (!insEl) {
+    insEl = document.createElement('div');
+    insEl.className = 'inspector';
+    insEl.setAttribute('role', 'dialog');
+    insEl.setAttribute('aria-label', 'Adjust shift');
+    document.body.appendChild(insEl);
+    insEl.addEventListener('pointerdown', onInsPress);
+    insEl.addEventListener('click', onInsClick);
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach((t) => insEl.addEventListener(t, () => { clearTimeout(holdT); clearInterval(holdT); holdT = null; }));
+  }
+  document.body.classList.add('has-inspector');
+  drawInspector();
+  markSelected();
+  // Keep the chosen bar visible above the panel.
+  requestAnimationFrame(() => {
+    const bar = app.querySelector('.bar.sel');
+    if (!bar || !insEl) return;
+    const b = bar.getBoundingClientRect();
+    const top = insEl.getBoundingClientRect().top;
+    const head = app.querySelector('header.top')?.getBoundingClientRect().bottom || 0;
+    if (b.bottom > top - 16) window.scrollBy({ top: b.bottom - top + 40, behavior: reduceMotion() ? 'auto' : 'smooth' });
+    else if (b.top < head + 8) window.scrollBy({ top: b.top - head - 60, behavior: reduceMotion() ? 'auto' : 'smooth' });
+  });
+}
+function defaultSplit() {
+  const end = shownEnd();
+  const mid = ins.s + (end - ins.s) / 2;
+  const hour = Math.round(mid / 60) * 60;
+  return clampN(hour > ins.s && hour < end ? hour : Math.round(mid / SNAP) * SNAP, ins.s + SNAP, end - SNAP);
+}
+function drawInspector() {
+  const e = emp(ins.eid);
+  const end = shownEnd();
+  const stp = (label, key, val, minus = '−', plus = '+') => `<div class="stp"><span class="stp-l">${label}</span>
+    <button class="stp-b" data-step="${key}" data-dir="-1" aria-label="${label} 15 minutes earlier">${minus}</button>
+    <b class="stp-v" data-val="${key}">${val}</b>
+    <button class="stp-b" data-step="${key}" data-dir="1" aria-label="${label} 15 minutes later">${plus}</button></div>`;
+  const canSplit = end - ins.s >= 2 * SNAP;
+  insEl.innerHTML = `
+    <div class="in-head">${avatar(e)}<div class="in-title"><b>${esc(e.name)}</b><span data-val="sum"></span></div>
+      <div class="seg small in-job"><button class="${ins.role !== 'kitchen' ? 'on' : ''}" data-job="cashier">${ROLES.cashier}</button><button class="${ins.role === 'kitchen' ? 'on' : ''}" data-job="kitchen">${ROLES.kitchen}</button></div>
+      <button class="btn icon ghost in-x" data-in="close" aria-label="Close">✕</button></div>
+    <div class="in-grid">
+      ${stp('Start', 's', fmtTime(ins.s))}
+      ${stp('End', 'e', ins.e == null ? 'No end' : fmtTime(ins.e))}
+      ${stp('Move', 'm', 'by 15 min', '‹', '›')}
+      ${canSplit ? stp('Split at', 'x', fmtTime(ins.split)) : ''}
+    </div>
+    <div class="in-actions">
+      ${canSplit ? '<button class="btn primary small" data-in="split">✂ Split here</button>' : ''}
+      ${insJoin() ? '<button class="btn small" data-in="join">⤺ Join parts</button>' : ''}
+      <button class="btn small" data-in="edit">More…</button>
+      <button class="btn small ghost danger" data-in="remove">Remove</button>
+    </div>`;
+  updateInspector();
+}
+function updateInspector() {
+  if (!insEl || !ins) return;
+  const end = shownEnd();
+  const set = (k, v) => { const x = insEl.querySelector(`[data-val="${k}"]`); if (x) x.textContent = v; };
+  set('s', fmtTime(ins.s));
+  set('e', ins.e == null ? 'No end' : fmtTime(ins.e));
+  set('x', fmtTime(ins.split));
+  set('sum', `${fmtBlock({ s: ins.s, e: ins.e })}${ins.e != null ? ` · ${fmtHours((ins.e - ins.s) / 60)} hrs` : ''} · ${ROLES[ins.role]}`);
+  // Live preview on the bar itself.
+  const bar = app.querySelector(`[data-bar][data-eid="${ins.eid}"][data-d="${ins.d}"][data-bi="${ins.bi}"]`);
+  const tl = bar?.closest('.timeline');
+  if (!bar || !tl) return;
+  const start = +tl.dataset.start;
+  const span = +tl.dataset.end - start;
+  const vs = clampN(ins.s, start, start + span);
+  const ve = clampN(end, vs + 1, start + span);
+  bar.style.left = `${((vs - start) / span) * 100}%`;
+  bar.style.width = `calc(${((ve - vs) / span) * 100}% - 3px)`;
+  bar.dataset.s = ins.s;
+  const t = bar.querySelector('.btime');
+  if (t) t.textContent = `${fmtTime(ins.s)}–${ins.e == null ? '?' : fmtTime(ins.e)}`;
+  let mark = bar.querySelector('.splitmark');
+  if (!mark) { mark = document.createElement('i'); mark.className = 'splitmark'; bar.appendChild(mark); }
+  mark.style.left = `${((ins.split - ins.s) / (end - ins.s)) * 100}%`;
+}
+function markSelected() {
+  app.querySelectorAll('.bar.sel').forEach((b) => b.classList.remove('sel'));
+  if (!ins) return;
+  app.querySelector(`[data-bar][data-eid="${ins.eid}"][data-d="${ins.d}"][data-bi="${ins.bi}"]`)?.classList.add('sel');
+  updateInspector();
+}
+// After every redraw: follow the saved data (e.g. after Undo), or close if the shift is gone.
+function syncInspector() {
+  if (!ins || ins.dirty) { markSelected(); return; }
+  const b = insBlock();
+  if (!b || !app.querySelector('.timeline')) { closeInspector(); return; }
+  const role = blockRole(b, emp(ins.eid));
+  const changed = b.s !== ins.s || b.e !== ins.e || role !== ins.role;
+  Object.assign(ins, { s: b.s, e: b.e, role });
+  if (changed || ins.split <= ins.s || ins.split >= shownEnd()) ins.split = defaultSplit();
+  drawInspector();
+  markSelected();
+}
+function nudge(key, dir) {
+  const step = SNAP * dir;
+  const end = shownEnd();
+  if (key === 's') ins.s = clampN(ins.s + step, 0, end - SNAP);
+  else if (key === 'e') ins.e = clampN(end + step, ins.s + SNAP, 1440);
+  else if (key === 'm') {
+    const len = end - ins.s;
+    ins.s = clampN(ins.s + step, 0, 1440 - len);
+    if (ins.e != null) ins.e = ins.s + len;
+  } else if (key === 'x') { ins.split = clampN(ins.split + step, ins.s + SNAP, end - SNAP); updateInspector(); return; }
+  ins.split = clampN(ins.split, ins.s + SNAP, shownEnd() - SNAP);
+  ins.dirty = true;
+  clearTimeout(ins.timer);
+  ins.timer = setTimeout(commitInspector, 700);
+  updateInspector();
+}
+function onInsPress(ev) {
+  const b = ev.target.closest('[data-step]');
+  if (!b) return;
+  ev.preventDefault();
+  const go = () => nudge(b.dataset.step, +b.dataset.dir);
+  go();
+  // Hold to keep going.
+  clearTimeout(holdT); clearInterval(holdT);
+  holdT = setTimeout(() => { holdT = setInterval(go, 90); }, 380);
+}
+async function commitInspector() {
+  if (!ins?.dirty) return;
+  clearTimeout(ins.timer);
+  ins.dirty = false;
+  const cell = insCell();
+  if (!cell?.blocks?.[ins.bi]) { render(true); return; }
+  const blocks = cell.blocks.map((x) => ({ ...x }));
+  const nb = withJob({ ...blocks[ins.bi], s: ins.s, e: ins.e }, ins.role, ins.eid);
+  blocks[ins.bi] = nb;
+  ins.bi = blocks.slice().sort((a, b) => a.s - b.s).indexOf(nb);
+  await saveParts(ins.eid, ins.d, blocks, `${empLabel(ins.eid)}: ${fmtBlock(nb)}`);
+}
+function flushInspector() { if (ins?.dirty) commitInspector(); }
+function closeInspector() {
+  flushInspector();
+  ins = null;
+  insEl?.remove();
+  insEl = null;
+  document.body.classList.remove('has-inspector');
+  app.querySelectorAll('.bar.sel').forEach((b) => b.classList.remove('sel'));
+  app.querySelectorAll('.splitmark').forEach((m) => m.remove());
+}
+async function onInsClick(ev) {
+  const t = ev.target.closest('button');
+  if (!t || !ins) return;
+  if (t.dataset.step && ev.detail === 0) { nudge(t.dataset.step, +t.dataset.dir); return; } // keyboard
+  const who = empLabel(ins.eid);
+  if (t.dataset.job) {
+    if (t.dataset.job === ins.role) return;
+    flushInspector();
+    ins.role = t.dataset.job;
+    const blocks = insCell().blocks.map((x) => ({ ...x }));
+    blocks[ins.bi] = withJob({ ...blocks[ins.bi] }, ins.role, ins.eid);
+    insEl.querySelectorAll('[data-job]').forEach((x) => x.classList.toggle('on', x.dataset.job === ins.role));
+    await saveParts(ins.eid, ins.d, blocks, `${who} → ${ROLES[ins.role]} ${fmtBlock(blocks[ins.bi])}`);
+    return;
+  }
+  switch (t.dataset.in) {
+    case 'close': closeInspector(); break;
+    case 'edit': { const { eid, d } = ins; closeInspector(); openCellEditor(eid, d); break; }
+    case 'remove': {
+      flushInspector();
+      const { eid, d, bi } = ins;
+      const blocks = insCell().blocks.map((x) => ({ ...x }));
+      const [gone] = blocks.splice(bi, 1);
+      closeInspector();
+      await saveParts(eid, d, blocks, `Removed ${who} ${fmtBlock(gone)}`);
+      break;
+    }
+    case 'split': {
+      flushInspector();
+      const blocks = insCell().blocks.map((x) => ({ ...x }));
+      const b = blocks[ins.bi];
+      const second = { ...b, s: ins.split };
+      blocks.splice(ins.bi, 1, { ...b, e: ins.split }, second);
+      const at = ins.split;
+      ins.bi = blocks.slice().sort((a, c) => a.s - c.s).indexOf(second);
+      Object.assign(ins, { s: second.s, e: second.e });
+      ins.split = defaultSplit();
+      await saveParts(ins.eid, ins.d, blocks, `Split ${who} at ${fmtTime(at)}`);
+      break;
+    }
+    case 'join': {
+      flushInspector();
+      const j = insJoin();
+      if (!j) break;
+      const blocks = insCell().blocks.map((x) => ({ ...x }));
+      const b = blocks[ins.bi];
+      const merged = { ...b, s: Math.min(b.s, j.s), e: b.e == null || j.e == null ? null : Math.max(b.e, j.e) };
+      const rest = blocks.filter((_, i) => i !== ins.bi && i !== j.i);
+      const all = [...rest, merged];
+      ins.bi = all.slice().sort((a, c) => a.s - c.s).indexOf(merged);
+      Object.assign(ins, { s: merged.s, e: merged.e });
+      ins.split = defaultSplit();
+      await saveParts(ins.eid, ins.d, all, `Joined ${who}: ${fmtBlock(merged)}`);
+      break;
+    }
+    default:
+  }
+}
+
+// ---- small pop-up (used by "+ Add someone")
 let popEl = null;
 function closeBarPop() { popEl?.remove(); popEl = null; }
 function placePop(el, x, anchor) {
@@ -1944,63 +2282,6 @@ function placePop(el, x, anchor) {
   const h = el.offsetHeight;
   el.style.left = `${clampN(x - w / 2, 8, innerWidth - w - 8)}px`;
   el.style.top = `${r.bottom + 8 + h > innerHeight - 8 ? Math.max(8, r.top - h - 8) : r.bottom + 8}px`;
-}
-function openBarPop(g, x) {
-  closeBarPop();
-  const cell = state.week?.cells?.[g.eid]?.[g.d];
-  const b = cell?.blocks?.[g.bi];
-  if (!b) return;
-  const e = emp(g.eid);
-  const role = blockRole(b, e);
-  const other = role === 'kitchen' ? 'cashier' : 'kitchen';
-  const end = b.e ?? g.e0;
-  const bar = app.querySelector(`[data-bar][data-eid="${g.eid}"][data-d="${g.d}"][data-bi="${g.bi}"]`) || g.bar;
-  const rect = bar.getBoundingClientRect();
-  let t = b.s + Math.round(((x - rect.left) / g.ppm) / SNAP) * SNAP;
-  const canSplit = end - b.s >= 2 * SNAP;
-  t = clampN(t, b.s + SNAP, end - SNAP);
-  const join = (cell.blocks || []).map((x2, i) => ({ ...x2, i }))
-    .find((o) => o.i !== g.bi && blockRole(o, e) === role && ((b.e != null && o.s === b.e) || (o.e != null && o.e === b.s)));
-  popEl = document.createElement('div');
-  popEl.className = 'barpop';
-  popEl.setAttribute('role', 'menu');
-  popEl.innerHTML = `
-    <div class="bp-head">${avatar(e)}<div><b>${esc(e.name)}</b><span>${fmtBlock(b)} · ${ROLES[role]}</span></div></div>
-    ${canSplit ? `<button data-bp="split"><i>✂</i>Split at ${fmtTime(t)}</button>` : ''}
-    ${join ? `<button data-bp="join"><i>⤺</i>Join with ${fmtBlock(join)}</button>` : ''}
-    <button data-bp="job"><i>⇄</i>Move to ${ROLES[other]}</button>
-    <button data-bp="edit"><i>✎</i>Edit times…</button>
-    <button data-bp="remove" class="bad"><i>✕</i>Remove ${cell.blocks.length > 1 ? 'this part' : 'shift'}</button>`;
-  placePop(popEl, x, bar);
-  popEl.onclick = (ev) => {
-    const btn = ev.target.closest('[data-bp]');
-    if (!btn) return;
-    closeBarPop();
-    const blocks = cell.blocks.map((x2) => ({ ...x2 }));
-    const who = e.name;
-    switch (btn.dataset.bp) {
-      case 'split':
-        blocks.splice(g.bi, 1, { ...b, e: t }, { ...b, s: t });
-        saveParts(g.eid, g.d, blocks, `Split ${who} at ${fmtTime(t)}. Drag a part to move it or switch jobs`);
-        break;
-      case 'join': {
-        const merged = { ...b, s: Math.min(b.s, join.s), e: b.e == null || join.e == null ? null : Math.max(b.e, join.e) };
-        const rest = blocks.filter((_, i) => i !== g.bi && i !== join.i);
-        saveParts(g.eid, g.d, [...rest, merged], `Joined ${who}: ${fmtBlock(merged)}`);
-        break;
-      }
-      case 'job':
-        blocks[g.bi] = withJob(b, other, g.eid);
-        saveParts(g.eid, g.d, blocks, `${who} → ${ROLES[other]} ${fmtBlock(b)}`);
-        break;
-      case 'edit': openCellEditor(g.eid, g.d); break;
-      case 'remove':
-        blocks.splice(g.bi, 1);
-        saveParts(g.eid, g.d, blocks, `Removed ${who} ${fmtBlock(b)}`);
-        break;
-      default:
-    }
-  };
 }
 // "+ Add someone" → pick a person; they get a 4-hour shift at the first gap in that lane.
 function openAddPicker(btn, role, d) {
@@ -2047,11 +2328,18 @@ app.addEventListener('keydown', (ev) => {
   ev.preventDefault();
   const g = barData(bar);
   const r = bar.getBoundingClientRect();
-  if (g) openBarPop(g, r.left + r.width / 2);
+  if (g) openInspector(g.eid, g.d, g.bi);
 });
 
 document.addEventListener('keydown', (e) => {
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && !isEditing() && !modalRoot.innerHTML && state.user && (e.key === 'z' || e.key === 'Z' || e.key === 'y')) {
+    e.preventDefault();
+    if (e.key === 'y' || e.shiftKey) redo(); else undo();
+    return;
+  }
   if (e.key === 'Escape' && popEl) { closeBarPop(); return; }
+  if (e.key === 'Escape' && ins) { closeInspector(); return; }
   if (e.key === 'Escape' && drag) { const g = endBarDrag(); if (g.active) render(true); return; }
   if (e.key === 'Escape' && modalRoot.innerHTML) closeModal();
   if (isEditing() || modalRoot.innerHTML) return;

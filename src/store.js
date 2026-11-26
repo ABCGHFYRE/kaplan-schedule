@@ -108,6 +108,13 @@ function normalizeWeek(w) {
 }
 
 // ---------- weeks ----------
+/** The current saved copy of a week (from the shown/nearby cache or Firestore). */
+export async function readWeek(weekId) {
+  const n = near.get(weekId);
+  if (n?.ready) return n.data ? JSON.parse(JSON.stringify(n.data)) : null;
+  const snap = await getDoc(doc(db, 'weeks', weekId));
+  return snap.exists() ? normalizeWeek(snap.data()) : null;
+}
 const weekRef = (id) => doc(db, 'weeks', id);
 
 export async function setCell(weekId, eid, d, cell) {
