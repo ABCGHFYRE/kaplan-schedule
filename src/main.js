@@ -121,18 +121,27 @@ function render(force = false) {
   const views = { week: viewWeek, coverage: viewCoverage, people: viewPeople, employees: viewPeople, timeoff: viewPeople, settings: viewSettings };
   const fn = views[r.view] || viewWeek;
   const scroll = window.scrollY;
-  app.innerHTML = shell(r, fn(r));
+  const body = fn(r);
+  const key = `${r.view}|${r.weekId}|${pickedDay ? `${pickedDay.weekId}:${pickedDay.d}` : ''}|${body.includes('class="spinner"') ? 'L' : 'R'}`;
+  const anim = key !== lastKey ? (navDir > 0 ? 'enter-next' : navDir < 0 ? 'enter-prev' : 'enter') : '';
+  if (key !== lastKey) navDir = 0;
+  lastKey = key;
+  app.innerHTML = shell(r, body, anim);
   window.scrollTo(0, scroll);
+  if (flashCells.size) setTimeout(() => flashCells.clear(), 1600);
 }
+let lastKey = '';
+let navDir = 0; // +1 = moving to a later week, -1 = earlier (for the slide direction)
+const flashCells = new Set(); // "eid:d" of shifts just saved, to glow briefly
 
-function shell(r, body) {
+function shell(r, body, anim = '') {
   const tab = (href, label, on) => `<a href="${href}" class="${on ? 'on' : ''}">${label}</a>`;
   const err = (state.error ? `<div class="banner error">${esc(state.error)}</div>` : '')
     + (updateReady ? '<div class="banner update"><span>A new version of the app is ready.</span><button class="btn small" data-action="refresh-app">Refresh now</button></div>' : '');
   const sched = r.view === 'week' || r.view === 'coverage';
   return `
   <header class="top">
-    <div class="brand"><span class="logo">K</span><span>Kaplan Food</span></div>
+    <a class="brand" href="#/week/${nextMonday()}"><img class="logo" src="icons/icon.svg" alt=""><span>Kaplan Food</span></a>
     <nav>
       ${tab(`#/week/${r.weekId}`, 'Schedule', sched)}
       ${tab('#/people', 'People', r.view === 'people' || r.view === 'employees' || r.view === 'timeoff')}
@@ -140,7 +149,7 @@ function shell(r, body) {
     </nav>
   </header>
   ${err}
-  <main>${body}</main>`;
+  <main class="${anim}">${body}</main>`;
 }
 
 // ====================================================================== login
@@ -148,12 +157,12 @@ function renderLogin(error = '') {
   app.innerHTML = `
   <div class="login">
     <form class="login-card" id="login-form">
-      <div class="logo big">K</div>
+      <img class="logo big" src="icons/icon.svg" alt="">
       <h1>Kaplan Food Schedule</h1>
       <p class="muted">Enter the manager password.</p>
       <input type="password" id="pw" autocomplete="current-password" placeholder="Password" required autofocus>
       <button class="btn primary" type="submit">Sign in</button>
-      <p class="error-text" id="login-error">${esc(error)}</p>
+      <p class="error-text ${error ? 'shake' : ''}" id="login-error">${esc(error)}</p>
       <p class="muted small">You'll stay signed in on this device.</p>
     </form>
   </div>`;
@@ -166,7 +175,7 @@ function renderLogin(error = '') {
       await login(document.getElementById('pw').value);
     } catch (err) {
       const bad = ['auth/wrong-password', 'auth/invalid-credential', 'auth/invalid-login-credentials', 'auth/user-not-found'];
-      renderLogin(bad.includes(err.code) ? 'Wrong password.'
+      renderLogin(bad.includes(err.code) ? 'Wrong password. Try again.'
         : err.code === 'auth/too-many-requests' ? 'Too many tries. Wait a minute and try again.'
           : `Couldn't sign in (${err.code || err.message}).`);
     }
@@ -206,6 +215,14 @@ function loading(what = 'Loading…') {
 
 function empLabel(eid) {
   return state.employees.get(eid)?.name || eid;
+}
+function initials(name) {
+  const parts = String(name).replace(/[^A-Za-z' ]/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  return (parts.length === 1 ? parts[0][0] : parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+function avatar(e, cls = '') {
+  return `<span class="av ${cls}" style="--c:${esc(e.color || '#7d8a84')}" aria-hidden="true">${esc(initials(e.name))}</span>`;
 }
 function emp(eid) {
   return state.employees.get(eid) || { id: eid, name: eid, role: 'cashier', color: '#888' };
@@ -397,8 +414,8 @@ function viewWeek(r) {
     const list = week.rows.map((eid) => {
       const e = emp(eid);
       const { inner, warns } = cellHtml(eid, d, r, { big: true });
-      return `<button class="mrow ${warns.length ? 'warn' : ''}" data-action="cell" data-eid="${eid}" data-d="${d}">
-        <span class="mname"><span class="dot" style="background:${esc(e.color || '#888')}"></span>${esc(e.name)}<small class="mhrs ${totals.byEmp[eid] > ot ? 'ot' : ''}">${fmtHours(totals.byEmp[eid])} hrs/wk</small></span>
+      return `<button class="mrow ${warns.length ? 'warn' : ''} ${flashCells.has(`${eid}:${d}`) ? 'flash' : ''}" data-action="cell" data-eid="${eid}" data-d="${d}">
+        <span class="mname">${avatar(e)}${esc(e.name)}<small class="mhrs ${totals.byEmp[eid] > ot ? 'ot' : ''}">${fmtHours(totals.byEmp[eid])} hrs/wk</small></span>
         <span class="mshift">${inner}</span>
         ${warns.length ? `<span class="mwarn">${esc(warns[0])}</span>` : ''}
       </button>`;
@@ -429,12 +446,12 @@ function viewWeek(r) {
     const tds = DAYS.map((_, d) => {
       const { inner, warns } = cellHtml(eid, d, r);
       const date = addDays(r.weekId, d);
-      return `<td class="cell ${week.cells[eid]?.[d]?.off ? 'is-off' : ''} ${warns.length ? 'warn' : ''} ${date === today ? 'today' : ''}" data-action="cell" data-eid="${eid}" data-d="${d}" title="${esc(warns.join('\n'))}">${inner}</td>`;
+      return `<td class="cell ${week.cells[eid]?.[d]?.off ? 'is-off' : ''} ${warns.length ? 'warn' : ''} ${date === today ? 'today' : ''} ${flashCells.has(`${eid}:${d}`) ? 'flash' : ''}" data-action="cell" data-eid="${eid}" data-d="${d}" title="${esc(warns.join('\n'))}">${inner}</td>`;
     }).join('');
     const h = totals.byEmp[eid];
     return `<tr>
       <th class="emp">
-        <span class="dot" style="background:${esc(e.color || '#888')}"></span><span class="ename">${esc(e.name)}</span>
+        ${avatar(e)}<span class="ename">${esc(e.name)}</span>
         <span class="menu rowmenu"><button class="rowbtn" data-action="menu" title="Move or remove ${esc(e.name)}" aria-label="Options for ${esc(e.name)}">⋯</button>
           <span class="menu-list">
             <button data-action="row-up" data-i="${i}" ${i === 0 ? 'disabled' : ''}>Move up</button>
@@ -553,6 +570,7 @@ function openCellEditor(eid, d) {
 
   const save = async (cell) => {
     const changes = [{ eid, d, cell }, ...[...st.applyTo].map((x) => ({ eid, d: x, cell }))];
+    changes.forEach((c) => flashCells.add(`${c.eid}:${c.d}`));
     close();
     await guard(() => setCells(state.weekId, changes));
   };
@@ -730,7 +748,14 @@ async function removeFromWeek(eid) {
   });
 }
 
+new MutationObserver(() => {
+  const ov = modalRoot.firstElementChild;
+  if (!ov) { delete modalRoot.dataset.open; return; }
+  if (!modalRoot.dataset.open) { ov.classList.add('enter'); modalRoot.dataset.open = '1'; }
+}).observe(modalRoot, { childList: true });
+
 function closeModal() {
+  delete modalRoot.dataset.open;
   modalRoot.innerHTML = '';
   modalRoot.onclick = null;
   modalRoot.onchange = null;
@@ -943,7 +968,7 @@ function viewPeople() {
     const h = thisWeek?.[e.id];
     return `<div class="person">
       <div class="pmain">
-        <span class="dot big" style="background:${esc(e.color || '#888')}"></span>
+        ${avatar(e, 'big')}
         <button class="pname" data-action="rename" data-eid="${e.id}" title="Change name">${esc(e.name)} <span class="pencil" aria-hidden="true">✎</span></button>
         ${h != null ? `<span class="phrs ${h > ot ? 'ot' : ''}" title="Hours scheduled for next week (${weekLabel(nextMonday())})">${fmtHours(h)} hrs next week</span>` : ''}
       </div>
@@ -1097,6 +1122,9 @@ function viewSettings() {
 app.addEventListener('click', async (ev) => {
   const goBtn = ev.target.closest('[data-go]');
   if (goBtn) {
+    const target = goBtn.dataset.go.split('/')[1];
+    const cur = route().weekId;
+    navDir = target && target !== cur ? (target > cur ? 1 : -1) : 0;
     go(`#/${goBtn.dataset.go}`);
     return;
   }
@@ -1163,10 +1191,12 @@ app.addEventListener('click', async (ev) => {
       break;
     }
     case 'row-remove': await removeFromWeek(el.dataset.eid); break;
-    case 'hide-tips':
+    case 'hide-tips': {
       try { localStorage.setItem('kfs-tips', 'hidden'); } catch { /* private mode */ }
-      render(true);
+      const tipEl = el.closest('.tips');
+      if (tipEl) { tipEl.classList.add('leaving'); setTimeout(() => render(true), 260); } else render(true);
       break;
+    }
     case 'print': window.print(); break;
     case 'png': {
       el.disabled = true;
@@ -1306,8 +1336,8 @@ document.addEventListener('keydown', (e) => {
   if (isEditing() || modalRoot.innerHTML) return;
   const r = route();
   if (state.user && (r.view === 'week' || r.view === 'coverage')) {
-    if (e.key === 'ArrowLeft') go(`#/${r.view}/${addDays(r.weekId, -7)}`);
-    if (e.key === 'ArrowRight') go(`#/${r.view}/${addDays(r.weekId, 7)}`);
+    if (e.key === 'ArrowLeft') { navDir = -1; go(`#/${r.view}/${addDays(r.weekId, -7)}`); }
+    if (e.key === 'ArrowRight') { navDir = 1; go(`#/${r.view}/${addDays(r.weekId, 7)}`); }
   }
 });
 
