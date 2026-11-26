@@ -880,7 +880,7 @@ main.enter-load > :not(.toolbar) { animation: fade .3s ease both; }
    not from gradients or theme-color, so give the header a solid green under its gradient. */
 .top, .statusfill { background: #1f6e4e; } /* solid: a gradient makes Safari blur the status bar instead */
 body { padding-top: var(--toph, 0px); }
-.statusfill { position: fixed; top: 0; left: 0; right: 0; height: env(safe-area-inset-top); background: #1f6e4e; z-index: 25; pointer-events: none; }
+.statusfill { position: fixed; top: 0; left: 0; right: 0; height: env(safe-area-inset-top); background: #1f6e4e; z-index: 25; }
 @media (orientation: landscape) and (max-height: 500px) {
   .top { position: static; }
   body { padding-top: 0; }
@@ -1037,4 +1037,21 @@ body.has-inspector #toast { bottom: calc(var(--insh, 250px) + 1.5rem); }
   .in-head { flex-wrap: wrap; }
   .in-job { order: 3; width: 100%; display: flex; }
   .in-job button { flex: 1; }
+}
+
+/* ---------- iOS 26+ home-screen app: no blur over the header ----------
+   iOS draws a soft blur ~40pt under the status bar. It skips it when a pinned, full-width, solid box sits at the
+   top edge (our header / status strip, which must be hit-testable). If the app was added while the status bar
+   was see-through (content under it), that check is off, so the header's content is kept below the blur band:
+   the band shows only plain green. With a normal status bar the inset is 0 and nothing changes. */
+@media (display-mode: standalone) {
+  .top { padding-top: max(.6rem, calc(env(safe-area-inset-top) + min(env(safe-area-inset-top), 40px))); }
+  .statusfill { height: calc(env(safe-area-inset-top) + min(env(safe-area-inset-top), 40px)); }
+  :root { background-color: #1f6e4e; }
+  body { background-color: var(--bg); min-height: 100vh; min-height: 100dvh; }
+}
+@media (display-mode: standalone) and (orientation: landscape) and (max-height: 500px) {
+  .top { padding-top: .35rem; }
+  .statusfill { height: 0; }
+  :root { background-color: var(--bg); }
 }
