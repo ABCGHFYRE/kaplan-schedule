@@ -58,13 +58,13 @@ This typically indicates that your device does not have a healthy Internet conne
   </div>`,document.getElementById("login-form").addEventListener("submit",async e=>{e.preventDefault();let t=e.target.querySelector("button");t.disabled=!0,t.textContent="Signing in\u2026";try{await Rb(document.getElementById("pw").value)}catch(s){Dv(["auth/wrong-password","auth/invalid-credential","auth/invalid-login-credentials","auth/user-not-found"].includes(s.code)?"Wrong password. Try again.":s.code==="auth/too-many-requests"?"Too many tries. Wait a minute and try again.":`Couldn't sign in (${s.code||s.message}).`)}})}function xs(n,e=""){let t=RE(n.weekId);return`
   <div class="toolbar">
     <div class="weeknav">
-      <button class="btn icon" data-go="${n.view}/${Ie(n.weekId,-7)}" title="Previous week" aria-label="Previous week">\u2039</button>
+      <button class="btn weekarrow" data-go="${n.view}/${Ie(n.weekId,-7)}" title="Previous week" aria-label="Previous week"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
       <label class="weekpick" title="Pick a week">
-        <span class="weektitle">${Gt(n.weekId)}</span>
+        <span class="weektitle">${Gt(n.weekId).replace(/(, \d{4})$/,s=>`<span class="${s.endsWith(String(new Date().getFullYear()))?"wyear":""}">${s}</span>`)}</span>
         <span class="weeksub">${t||"Tap to pick a date"}</span>
         <input type="date" data-jump="${n.view}" value="${n.weekId}" aria-label="Jump to date">
       </label>
-      <button class="btn icon" data-go="${n.view}/${Ie(n.weekId,7)}" title="Next week" aria-label="Next week">\u203A</button>
+      <button class="btn weekarrow" data-go="${n.view}/${Ie(n.weekId,7)}" title="Next week" aria-label="Next week"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
     </div>
     <div class="seg viewtoggle" data-pill="view"><span class="pill"></span>
       <button class="${n.view==="week"?"on":""}" data-go="week/${n.weekId}">Week</button>

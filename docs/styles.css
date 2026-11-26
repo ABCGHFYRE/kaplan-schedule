@@ -1099,3 +1099,12 @@ body.has-inspector #toast { bottom: calc(var(--insh, 250px) + 1.5rem); }
 .cp-week:active { transform: scale(.985); }
 .cpw-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .55rem; }
 .cpw-meta { font-size: .85rem; color: var(--muted); }
+
+/* ---------- big week arrows ---------- */
+.btn.weekarrow { width: 64px; height: 56px; padding: 0; display: inline-grid; place-items: center; flex: none; border-radius: 14px; }
+.btn.weekarrow svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 2.8; stroke-linecap: round; stroke-linejoin: round; }
+.btn.weekarrow:active { transform: scale(.94); }
+@media (max-width: 760px) { .btn.weekarrow { width: 72px; height: 60px; } }
+@media (max-width: 360px) { .btn.weekarrow { width: 56px; height: 54px; } }
+@media (orientation: landscape) and (max-height: 500px) { .btn.weekarrow { width: 52px; height: 42px; } .btn.weekarrow svg { width: 24px; height: 24px; } }
+@media (max-width: 760px) { .weektitle .wyear { display: none; } .weektitle { white-space: nowrap; } }

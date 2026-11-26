@@ -386,13 +386,13 @@ function weekNav(r, extra = '') {
   return `
   <div class="toolbar">
     <div class="weeknav">
-      <button class="btn icon" data-go="${r.view}/${addDays(r.weekId, -7)}" title="Previous week" aria-label="Previous week">‹</button>
+      <button class="btn weekarrow" data-go="${r.view}/${addDays(r.weekId, -7)}" title="Previous week" aria-label="Previous week"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
       <label class="weekpick" title="Pick a week">
-        <span class="weektitle">${weekLabel(r.weekId)}</span>
+        <span class="weektitle">${weekLabel(r.weekId).replace(/(, \d{4})$/, (y) => `<span class="${y.endsWith(String(new Date().getFullYear())) ? 'wyear' : ''}">${y}</span>`)}</span>
         <span class="weeksub">${rel || 'Tap to pick a date'}</span>
         <input type="date" data-jump="${r.view}" value="${r.weekId}" aria-label="Jump to date">
       </label>
-      <button class="btn icon" data-go="${r.view}/${addDays(r.weekId, 7)}" title="Next week" aria-label="Next week">›</button>
+      <button class="btn weekarrow" data-go="${r.view}/${addDays(r.weekId, 7)}" title="Next week" aria-label="Next week"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
     </div>
     <div class="seg viewtoggle" data-pill="view"><span class="pill"></span>
       <button class="${r.view === 'week' ? 'on' : ''}" data-go="week/${r.weekId}">Week</button>
